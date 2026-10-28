@@ -363,3 +363,29 @@ python scripts/charx.py diff "C:/path/card.charx" "out/<tên card>.charx"
 | `text import` báo conflict | JSON và file text cùng đổi. Xem lại, hoặc `--force` để lấy bản text. |
 | `pack` từ chối vì validation | Đọc danh sách lỗi; sửa work rồi pack lại. `--force` chỉ dùng khi thật sự hiểu rủi ro. |
 | `Refusing to overwrite the source archive` | `--out` trỏ đúng file nguồn. Đổi sang thư mục khác hoặc bỏ `--out` để dùng tên card. |
+
+## 12. Việt hóa toàn bộ UI của card
+
+Với yêu cầu "mọi thứ card hiển thị dạng UI sang tiếng Việt", chỉ sửa lớp hiển thị; không dịch
+lore/prose. Kiểm kê đủ bề mặt trước khi sửa:
+
+1. `text export`; quét Hangul trong `module/regex`, `card/extensions`; đọc trigger để tìm
+   `print`, biến `ml_*`/`*_ws`/`*_tab`, bảng `AVATARS`, trạng thái dự án.
+2. Selector/màn hình bắt đầu: dịch kicker, phòng ban, scene card, caption, nút, chữ cái đầu
+   avatar trong `<selector>.out.txt`; giữ `$1...`, `{{...}}`, class, `risu-trigger`.
+3. Side panel + nhật ký lệnh: dịch nhãn tĩnh trong regex OUT; thêm bảng `DISPLAY_NAMES` và
+   gọi `displayName()` ở mọi chỗ đưa tên vào UI; dịch `ml_ws`/`ml_tab`/`ml_bot`, trạng thái.
+4. HUD: thêm một câu `Write every HUD value in Vietnamese...`; dịch block ví dụ; giữ marker
+   (`◈YR`, `◈ML`), field key (`TIME|`, `STAMP|`), mã (`C/H/N`, `on/away/dnd`) và thứ tự ngày
+   mà script parse (`MM.DD`). Dịch nhãn tĩnh trong HUD OUT và `content:"..."` của CSS.
+5. Tên → avatar: thêm alias Latin vào bảng `AVATARS`/`av_` (giữ khóa gốc); regex capture tên
+   thường không cần đổi. Alias phải khớp đúng chuỗi UI in ra (PocketRisu không trim `getvar`).
+6. Lệnh: mở rộng regex IN `/(?:미팅|hop)...`, `/(?:시연회|demo)...`; giữ token cũ; cập nhật
+   note nhắc lệnh và regex xóa note cho cả `── 위` và `── Nhập`.
+7. Card có đa ngôn ngữ sẵn: thêm lựa chọn/bảng chuỗi `vi`, không ghi đè ngôn ngữ gốc.
+8. `text import` (Lua thì `set ... --file`, giữ LF), `validate`, `pack` ra file mới. `diff`
+   phải chỉ thấy các pointer UI + bản card book đồng bộ, `entries` 0 thay đổi.
+9. Mô phỏng từng regex bằng mẫu tiếng Việt: marker bị thay, `$n` không sót, nhãn đúng,
+   `<div>` cân bằng, `av_<Tên>`/asset `sp_*` tồn tại; thử cả lệnh cũ và mới.
+
+Chi tiết đầy đủ, mẫu lệnh và lỗi thường gặp: [ui-localization.md](ui-localization.md).
