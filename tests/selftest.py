@@ -211,6 +211,13 @@ def main():
         eq(core.unwrap_module(module)["assets"][0][1], "",
            "empty module asset URI preserved")
 
+    def t_info_consistency():
+        work_info = core.info_source(work)
+        archive_info = core.info_source(fixture)
+        eq(work_info["entry_count"], archive_info["entry_count"], "info entry count")
+        eq(work_info["payload_size"], archive_info["payload_size"], "info payload size")
+        eq(work_info["warnings"], archive_info["warnings"], "info warning counts")
+
     def t_noop_roundtrip():
         out = os.path.join(tmp, "roundtrip.charx")
         report = core.pack(work, out, sync_book="auto")
@@ -553,7 +560,17 @@ def main():
                                        "chara-ext-asset__0")), True, "v2 asset decoded")
         errors = [i for i in validate_work(v2_work) if i["level"] == "error"]
         eq(errors, [], "v2 validation")
+        v2_info = core.info_source(v2_work)
+        v2_archive = core.info_source(v2_path)
+        eq(v2_info["entry_count"], v2_archive["entry_count"], "v2 info entry count")
+        eq(v2_info["payload_size"], v2_archive["payload_size"], "v2 info payload size")
+        diff = core.diff_sources(v2_work, v2_path)
+        eq(diff["entries"], {"added": [], "removed": [], "changed": []},
+           "v2 work/archive diff is clean")
         out = os.path.join(tmp, "legacy_out.charx")
+        report = core.pack(v2_work, out, sync_book="auto")
+        eq(report["copied_source"], True, "v2 no-op copies the source")
+        eq(core.sha256_file(out), core.sha256_file(v2_path), "v2 no-op is byte-identical")
         core.pack(v2_work, out, sync_book="auto")
         names = sorted(read_entries(out))
         eq(names, ["chara", "chara-ext-asset_:0", "x_meta/chara-ext-asset_:0.json"],
@@ -875,6 +892,7 @@ def main():
             raise AssertionError("raw get escaped the work directory")
 
     check("unpack + validate a synthetic v3 card", t_unpack_validate)
+    check("info matches between work and archive", t_info_consistency)
     check("no-op pack is byte-identical", t_noop_roundtrip)
     check("edits disable the source-copy path", t_noop_copy_invalidation)
     check("charxJpeg prefix handling", t_jpeg_prefix)

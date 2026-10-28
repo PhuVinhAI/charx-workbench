@@ -34,7 +34,7 @@ charx-workbench/
   references/editing-recipes.md # công thức cho từng loại chỉnh sửa
   references/validation-codes.md # toàn bộ mã lỗi/cảnh báo
   LICENSES/                    # giấy phép rpack (MIT / AGPL) + NOTICE
-  tests/selftest.py            # 24 kiểm thử tổng hợp, không cần card thật
+  tests/selftest.py            # 25 kiểm thử tổng hợp, không cần card thật
 ```
 
 ## Bắt đầu nhanh
@@ -237,17 +237,17 @@ manifest; `pack` sẽ đưa byte mới vào `module.risum`. Có thể thay byte 
 ## Kiểm thử
 
 ```bash
-python tests/selftest.py          # 24/24 kiểm thử, tự xóa thư mục tạm
+python tests/selftest.py          # 25/25 kiểm thử, tự xóa thư mục tạm
 python tests/selftest.py --keep   # giữ tests/.tmp để xem
 ```
 
 Bộ test dựng card tổng hợp (v3 + module + asset + entry lạ, thêm biến thể charxJpeg và v2)
-rồi kiểm tra: no-op pack sao chép nguồn byte-identical và tự tắt khi có sửa, text conflict,
-giữ file người dùng trong `text/`, chặn pack khi thiếu file local, entry ẩn/trùng tên được
-bảo toàn, diff work↔archive không báo thay đổi giả, JSON pointer escaping, giới hạn độ
-sâu/vòng lặp folder, thao tác folder lorebook, asset nhúng module list/replace, raw path
-safety, sync lorebook, asset add/replace/remove/gc, validate gói hỏng, module decode/encode,
-và CLI.
+rồi kiểm tra: no-op pack sao chép nguồn byte-identical và tự tắt khi có sửa, `info` của
+work khớp archive về số entry/kích thước payload, text conflict, giữ file người dùng trong
+`text/`, chặn pack khi thiếu file local, entry ẩn/trùng tên được bảo toàn, diff work↔archive
+không báo thay đổi giả, JSON pointer escaping, giới hạn độ sâu/vòng lặp folder, thao tác
+folder lorebook, asset nhúng module list/replace, raw path safety, sync lorebook, asset
+add/replace/remove/gc, validate gói hỏng, module decode/encode, và CLI.
 
 ## Giấy phép
 

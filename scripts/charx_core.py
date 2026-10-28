@@ -1403,6 +1403,14 @@ def card_output_name(card, module, manifest):
     return "card"
 
 
+def serialized_card_entry(layout, card):
+    """Return the virtual (entry name, payload) that pack writes for the card."""
+    if layout == "v2":
+        compact = json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return "chara", base64.b64encode(compact)
+    return "card.json", json.dumps(card, ensure_ascii=False, indent=4).encode("utf-8")
+
+
 def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
          prefix_mode="keep", jpeg_prefix=None, compression_level=6):
     manifest, card, module = load_work(work)
@@ -1505,13 +1513,9 @@ def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
     layout = manifest.get("layout", "v3")
     virtual = {}
     card_record = _manifest_entry_by_name(manifest, "chara" if layout == "v2" else "card.json")
-    if layout == "v2":
-        compact = json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        virtual["chara"] = base64.b64encode(compact)
-        virtual["_sort"] = (3, 0)
-    else:
-        virtual["card.json"] = json.dumps(card, ensure_ascii=False, indent=4).encode("utf-8")
-        virtual["_sort"] = (3, 0)
+    card_entry, card_bytes = serialized_card_entry(layout, card)
+    virtual[card_entry] = card_bytes
+    virtual["_sort"] = (3, 0)
 
     # Build the exact bundle that will be written, then validate it.
     pending = []
@@ -1709,6 +1713,7 @@ def bundle_from_work(work, manifest=None, card=None, module=None):
     bundle.names = [item["entry"] for item in entries if not item["entry"].endswith("/")]
     bundle.name_set = set(bundle.names)
     local_by_entry = {item["entry"]: item["local"] for item in entries}
+    encoding_by_entry = {item["entry"]: item.get("encoding") for item in entries}
     bundle.sizes = {item["entry"]: item["size"] for item in entries}
 
     def _read(name):
@@ -1722,7 +1727,21 @@ def bundle_from_work(work, manifest=None, card=None, module=None):
         return read_bytes(os_path(work, local))
 
     def _head(name, count=32):
-        return _read(name)[:count]
+        if name in ("card.json", "chara"):
+            with open(os.path.join(work, "card.json"), "rb") as handle:
+                return handle.read(count)
+        if name == "module.risum":
+            return _read(name)[:count]
+        local = local_by_entry.get(name)
+        if local is None:
+            raise CharxError("No local file for entry %s" % name)
+        path = os_path(work, local)
+        if encoding_by_entry.get(name) == "base64":
+            with open(path, "rb") as handle:
+                data = handle.read(((count + 3) // 4) * 3)
+            return base64.b64encode(data)[:count]
+        with open(path, "rb") as handle:
+            return handle.read(count)
 
     bundle._read = _read
     bundle._head = _head
@@ -3252,9 +3271,12 @@ def snapshot_source(path):
         manifest, card, module = load_work(path)
         entries = {}
         for item in collect_pack_entries(path, manifest):
+            data = read_bytes(os_path(path, item["local"]))
+            if item.get("encoding") == "base64":
+                data = base64.b64encode(data)
             entries[item["entry"]] = {
-                "size": item["size"],
-                "sha256": sha256_bytes(read_bytes(os_path(path, item["local"]))),
+                "size": len(data),
+                "sha256": sha256_bytes(data),
             }
         prefix = b""
         if manifest.get("prefix_file") and os.path.isfile(os_path(path, manifest["prefix_file"])):
@@ -3411,7 +3433,25 @@ def info_source(path):
         manifest, card, module = load_work(path)
         pack_items = collect_pack_entries(path)
         names = [item["entry"] for item in pack_items]
-        sizes = {item["entry"]: item["size"] for item in pack_items}
+        sizes = {}
+        for item in pack_items:
+            size = item["size"] or 0
+            if item.get("encoding") == "base64":
+                size = 4 * ((size + 2) // 3)
+            sizes[item["entry"]] = size
+        card_entry, card_bytes = serialized_card_entry(manifest.get("layout", "v3"), card)
+        names.append(card_entry)
+        sizes[card_entry] = len(card_bytes)
+        raw_module = os.path.join(path, "_charx", "original", "module.risum")
+        module_size = os.path.getsize(raw_module) if os.path.isfile(raw_module) else 0
+        if module is not None:
+            try:
+                module_size = len(encode_module(module, _module_asset_blobs(path, module, manifest)))
+            except CharxError:
+                pass
+        if module is not None or os.path.isfile(raw_module):
+            names.append("module.risum")
+            sizes["module.risum"] = module_size
         prefix_size = 0
         if manifest.get("prefix_file") and os.path.isfile(os_path(path, manifest["prefix_file"])):
             prefix_size = os.path.getsize(os_path(path, manifest["prefix_file"]))
