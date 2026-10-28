@@ -144,7 +144,7 @@ def build_fixture(path, prefix=b""):
         {"key": "", "secondkey": "", "insertorder": 1000, "comment": "HUD",
          "content": "Constant HUD entry.", "mode": "normal", "alwaysActive": True,
          "selective": False, "extentions": {"risu_case_sensitive": False},
-         "useRegex": False, "folder": "folder:test"},
+         "useRegex": False, "folder": "\uf000folder:test"},
         {"key": "dragon, wyrm", "secondkey": "cave", "insertorder": 50,
          "comment": "Dragons", "content": "Dragons sleep in caves.", "mode": "normal",
          "alwaysActive": False, "selective": True,
@@ -284,6 +284,85 @@ def main():
         _, card, _module = core.load_work(work)
         eq(card["data"]["description"].endswith("Edited by selftest. [text edit]"), True,
            "forced text wins")
+
+    def t_lore_folder_export():
+        folder_work = os.path.join(tmp, "work_folders")
+        if os.path.isdir(folder_work):
+            shutil.rmtree(folder_work)
+        shutil.copytree(work, folder_work)
+        _manifest, card, module = core.load_work(folder_work)
+        lore = core.unwrap_module(module)["lorebook"]
+        top_id = "\uf000folder:test"
+        nested_id = "\uf000folder:nested"
+        lore.insert(0, {"key": top_id, "comment": "Test Folder", "content": "",
+                        "mode": "folder", "insertorder": 100, "alwaysActive": False,
+                        "secondkey": "", "selective": False})
+        lore.insert(1, {"key": nested_id, "comment": "Nested", "content": "",
+                        "mode": "folder", "insertorder": 100, "alwaysActive": False,
+                        "secondkey": "", "selective": False, "folder": top_id})
+        lore.append({"key": "", "secondkey": "", "insertorder": 1000, "comment": "HUD",
+                     "content": "Second HUD entry.", "mode": "normal",
+                     "alwaysActive": True, "selective": False,
+                     "extentions": {}, "useRegex": False, "folder": top_id})
+        lore.append({"key": "", "secondkey": "", "insertorder": 1000, "comment": "Deep",
+                     "content": "Deep lore content.", "mode": "normal",
+                     "alwaysActive": False, "selective": False,
+                     "extentions": {}, "useRegex": False, "folder": nested_id})
+        lore.append({"key": "", "secondkey": "", "insertorder": 1000, "comment": "Loose",
+                     "content": "Orphan folder reference.", "mode": "normal",
+                     "alwaysActive": False, "selective": False,
+                     "extentions": {}, "useRegex": False, "folder": "folder:missing"})
+        core.save_module(folder_work, module)
+        mapping = core.text_export(folder_work, force=True)
+        lore_files = sorted(item["file"] for item in mapping["files"]
+                            if "/lorebook/" in item["file"])
+        eq(lore_files, [
+            "module/lorebook/Dragons.md",
+            "module/lorebook/Loose.md",
+            "module/lorebook/Test_Folder/HUD.md",
+            "module/lorebook/Test_Folder/HUD_2.md",
+            "module/lorebook/Test_Folder/Nested/Deep.md",
+        ], "lorebook export mirrors folders")
+        deep = os.path.join(folder_work, "text", "module", "lorebook",
+                            "Test_Folder", "Nested", "Deep.md")
+        eq(os.path.isfile(deep), True, "nested folder file written")
+        with open(deep, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("Edited nested lore.")
+        applied = core.text_import(folder_work)
+        eq(applied["applied"], ["module/lorebook/Test_Folder/Nested/Deep.md"],
+           "nested import applied")
+        _manifest, _card, module = core.load_work(folder_work)
+        contents = [entry.get("content") for entry in core.unwrap_module(module)["lorebook"]]
+        eq("Edited nested lore." in contents, True, "nested lore content updated")
+
+        card["data"]["character_book"] = {
+            "name": "Selftest Book",
+            "entries": [core.lore_to_charbook(entry) for entry in lore],
+        }
+        card_files = sorted(item["file"] for item in core._text_targets(card, None)
+                            if "/character_book/" in item["file"])
+        eq(card_files, [
+            "card/character_book/Dragons.md",
+            "card/character_book/Loose.md",
+            "card/character_book/Test_Folder/HUD.md",
+            "card/character_book/Test_Folder/HUD_2.md",
+            "card/character_book/Test_Folder/Nested/Deep.md",
+        ], "card lorebook export mirrors folders")
+
+        collision_card = {"data": {"character_book": {"entries": [
+            core.lore_to_charbook({
+                "key": "\uf000folder:md", "comment": "Notes.md", "content": "",
+                "mode": "folder", "insertorder": 100, "alwaysActive": False,
+                "secondkey": "", "selective": False}),
+            core.lore_to_charbook({
+                "key": "", "comment": "Notes", "content": "Body.",
+                "mode": "normal", "insertorder": 100, "alwaysActive": False,
+                "secondkey": "", "selective": False}),
+        ]}}}
+        collision_files = [item["file"] for item in core._text_targets(collision_card, None)
+                           if "/character_book/" in item["file"]]
+        eq(collision_files, ["card/character_book/Notes_2.md"],
+           "lore file avoids folder name collision")
 
     def t_lorebook_edit():
         added = core.book_add(work, "Synthetic Entry", "alpha, beta",
@@ -508,6 +587,7 @@ def main():
     check("no-op pack is byte-identical", t_noop_roundtrip)
     check("charxJpeg prefix handling", t_jpeg_prefix)
     check("text export/import with conflict detection", t_text_edit)
+    check("lorebook export mirrors folders", t_lore_folder_export)
     check("lorebook add and module->card sync", t_lorebook_edit)
     check("module asset blob edit", t_module_asset_edit)
     check("asset add/replace/remove/gc", t_asset_ops)

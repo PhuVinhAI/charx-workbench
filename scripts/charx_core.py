@@ -2008,6 +2008,107 @@ def _lore_label(entry, name_field):
     return "lore"
 
 
+def _lore_folder_id(entry):
+    """Folder entries carry their id in `key` (module) or `keys[0]` (card)."""
+    key = entry.get("key")
+    if isinstance(key, str) and key.strip():
+        return key.strip()
+    keys = entry.get("keys")
+    if isinstance(keys, list):
+        for item in keys:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return None
+
+
+def _lore_folder_ref(entry):
+    folder = entry.get("folder")
+    if isinstance(folder, str):
+        folder = folder.strip()
+        if folder:
+            return folder
+    return None
+
+
+def _lore_folder_paths(lore):
+    """Map each folder id to its exported directory segments (PocketRisu folders)."""
+    folders = {}
+    order = []
+    for entry in lore:
+        if not isinstance(entry, dict) or (entry.get("mode") or "normal") != "folder":
+            continue
+        folder_id = _lore_folder_id(entry)
+        if folder_id is None or folder_id in folders:
+            continue
+        folders[folder_id] = entry
+        order.append(folder_id)
+
+    parent = {}
+    for folder_id in order:
+        raw = _lore_folder_ref(folders[folder_id])
+        parent[folder_id] = raw if raw in folders and raw != folder_id else None
+
+    state = {}
+
+    def visit(folder_id):
+        state[folder_id] = 1
+        parent_id = parent.get(folder_id)
+        if parent_id is not None:
+            if state.get(parent_id) == 1:
+                parent[folder_id] = None
+            elif parent_id not in state:
+                visit(parent_id)
+        state[folder_id] = 2
+
+    for folder_id in order:
+        if folder_id not in state:
+            visit(folder_id)
+
+    children = {}
+    for folder_id in order:
+        children.setdefault(parent.get(folder_id), []).append(folder_id)
+
+    segments = {}
+
+    def assign(parent_id):
+        used = set()
+        for folder_id in children.get(parent_id, []):
+            entry = folders[folder_id]
+            name = ""
+            for field in ("comment", "name"):
+                value = entry.get(field)
+                if isinstance(value, str) and value.strip():
+                    name = value
+                    break
+            segments[folder_id] = unique_filename(
+                clean_filename(name, fallback="folder"), used, "")
+            assign(folder_id)
+
+    assign(None)
+
+    paths = {}
+
+    def build(folder_id):
+        if folder_id not in paths:
+            parent_id = parent.get(folder_id)
+            prefix = build(parent_id) if parent_id is not None else ()
+            paths[folder_id] = prefix + (segments[folder_id],)
+        return paths[folder_id]
+
+    for folder_id in order:
+        build(folder_id)
+    return paths
+
+
+def _lore_folder_dir_names(folder_paths):
+    """Directory names per parent path, so lore files never shadow a folder."""
+    names = {}
+    for path in folder_paths.values():
+        for depth, segment in enumerate(path):
+            names.setdefault(path[:depth], set()).add(segment.lower())
+    return names
+
+
 def _text_targets(card, module, include_empty=False):
     targets = []
 
@@ -2039,29 +2140,34 @@ def _text_targets(card, module, include_empty=False):
             "/data/extensions/depth_prompt/prompt", "depth prompt")
 
     source, lore = effective_lore(card, module)
-    lore_files = set()
-    if source == "module":
+    if source in ("module", "card"):
+        if source == "module":
+            base_dir = "module/lorebook"
+            pointer_base = "/module/lorebook/%d/content"
+            name_field = "comment"
+        else:
+            base_dir = "card/character_book"
+            pointer_base = "/data/character_book/entries/%d/content"
+            name_field = "name"
+        folder_paths = _lore_folder_paths(lore)
+        folder_names = _lore_folder_dir_names(folder_paths)
+        lore_files = {}
         for index, entry in enumerate(lore):
             if not isinstance(entry, dict):
                 continue
-            content = entry.get("content")
-            if isinstance(content, str) and (include_empty or content != ""):
-                name = _lore_label(entry, "comment")
-                filename = "module/lorebook/" + unique_filename(
-                    clean_filename(name), lore_files, ".md")
-                add(filename, "module", "/module/lorebook/%d/content" % index,
-                    "lore: %s" % name)
-    elif source == "card":
-        for index, entry in enumerate(lore):
-            if not isinstance(entry, dict):
+            if (entry.get("mode") or "normal") == "folder":
                 continue
             content = entry.get("content")
-            if isinstance(content, str) and (include_empty or content != ""):
-                name = _lore_label(entry, "name")
-                filename = "card/character_book/" + unique_filename(
-                    clean_filename(name), lore_files, ".md")
-                add(filename, "card", "/data/character_book/entries/%d/content" % index,
-                    "lore: %s" % name)
+            if not isinstance(content, str) or not (include_empty or content != ""):
+                continue
+            name = _lore_label(entry, name_field)
+            dirs = folder_paths.get(_lore_folder_ref(entry), ())
+            used = lore_files.setdefault(dirs, set(folder_names.get(dirs, ())))
+            filename = "%s/%s" % (
+                "/".join((base_dir,) + dirs),
+                unique_filename(clean_filename(name), used, ".md"))
+            add(filename, source, pointer_base % index,
+                "lore: %s" % "/".join(dirs + (name,)))
 
     if isinstance(module, dict):
         module_obj = unwrap_module(module)

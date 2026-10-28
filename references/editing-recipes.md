@@ -70,7 +70,8 @@ Cách 1 — qua text export/import (khuyên dùng cho văn bản dài):
 
 ```bash
 python scripts/charx.py text export "work/card"
-# work/card/text/module/lorebook/TÊN_MỤC.md hoặc card/character_book/TÊN_MỤC.md
+# work/card/text/module/lorebook/[FOLDER/]TÊN_MỤC.md
+# hoặc work/card/text/card/character_book/[FOLDER/]TÊN_MỤC.md
 python scripts/charx.py text import "work/card"
 ```
 

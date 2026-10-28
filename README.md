@@ -55,7 +55,7 @@ python scripts/charx.py set "work/CharX File (6)" /data/description --string "N�
 
 # sửa văn bản dài, regex, CJS: xuất ra file rồi nhập lại
 python scripts/charx.py text export "work/CharX File (6)"
-#    -> work/CharX File (6)/text/card/description.md, module/lorebook/*.md, module/regex/*.txt ...
+#    -> text/card/description.md, text/module/lorebook/[FOLDER/]*.md, text/module/regex/*.txt ...
 python scripts/charx.py text import "work/CharX File (6)"
 
 # thêm một mục lorebook
@@ -131,10 +131,14 @@ python scripts/charx.py del WORK /data/tags --yes
 - module `name`, `description`, `cjs`, `backgroundEmbedding`, `customModuleToggle`;
 - regex `in`/`out`.
 
-File lorebook được đặt theo `comment` (module) hoặc `name` (card) đã làm sạch, không còn
-tiền tố index; nếu hai mục trùng tên, file sau thêm `_2`, `_3`… File regex cũng đặt theo
-`comment`: `<tên>.in.txt` và `<tên>.out.txt`. Tên không hợp lệ trên Windows (ký tự cấm, tên
-thiết bị như `CON`) cũng được làm sạch.
+Lorebook của PocketRisu có hệ thống thư mục: entry `mode: "folder"` giữ tên folder, entry
+con trỏ tới folder qua trường `folder`. `text export` dựng lại đúng cây đó, nên mục nằm
+trong folder `⚙️ SYSTEM` sẽ thành `module/lorebook/⚙️_SYSTEM/TÊN_MỤC.md`; folder lồng nhau
+tạo thư mục lồng nhau. Tên folder và tên file lấy từ `comment` (module) hoặc `name` (card)
+đã làm sạch, không còn tiền tố index. Trùng tên trong **cùng một thư mục** thì file/folder
+sau thêm `_2`, `_3`…; entry trỏ tới folder không tồn tại được xuất ở gốc. File regex cũng
+đặt theo `comment`: `<tên>.in.txt` và `<tên>.out.txt`. Tên không hợp lệ trên Windows (ký tự
+cấm, tên thiết bị như `CON`) cũng được làm sạch.
 
 `text/_map.json` lưu hash từng file. `text import` chỉ áp file đã đổi; nếu cả JSON và file
 text đều đổi từ lần export thì báo conflict (dùng `--force` để lấy bản text). Mặc định

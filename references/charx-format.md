@@ -195,6 +195,13 @@ Module entry (`lorebook[]`) fields: `key` (comma-separated string), `secondkey`,
 (including `risu_case_sensitive`, `risu_activationPercent`, `risu_loreCache`), `folder`,
 optional `activationPercent`, `loreCache`, `id`.
 
+Folders are ordinary entries with `mode: "folder"` and empty `content`. Their id lives in
+`key` (module) or `keys[0]` (card), formatted `\uf000folder:<uuid>`; their `comment`/`name`
+is the visible folder name. Child entries set `folder` to that id, and a folder entry may
+itself set `folder` to a parent id, so folders nest. An entry whose `folder` id does not
+match any folder entry is orphaned: PocketRisu hides it from the folder tree, and
+`text export` writes it at the lorebook root.
+
 Card → module (`convertCharbook`) also performs these migrations by prepending `@@` lines
 to `content` and deleting the old extension keys:
 
