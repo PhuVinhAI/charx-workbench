@@ -285,10 +285,15 @@ sẽ ghi lại đúng bytes đó; mọi thay đổi cấu trúc module phải ch
 ## 9. CharxJpeg và layout
 
 ```bash
-python scripts/charx.py pack "work/card" --out out/card.charx              # giữ prefix
-python scripts/charx.py pack "work/card" --out out/card.zip.charx --no-prefix
-python scripts/charx.py pack "work/card" --out out/card.charx --jpeg-prefix new.jpg
+python scripts/charx.py pack "work/card" --out out/                       # giữ prefix
+python scripts/charx.py pack "work/card" --no-prefix                      # bỏ prefix
+python scripts/charx.py pack "work/card" --out out/ --jpeg-prefix new.jpg
 ```
+
+Không có `--out`, file được ghi thành `<tên card>.charx` trong thư mục hiện tại; nếu `--out`
+là thư mục (hoặc kết thúc bằng `/`), file nằm trong thư mục đó. Tên lấy từ `data.name` của
+card và được làm sạch; nếu trống thì dùng tên lorebook/module/archive nguồn. `pack` từ chối
+ghi đè chính file nguồn.
 
 Với v2, pack ghi entry `chara` (base64 compact JSON) và các `chara-ext-asset_:N`; không tự
 chuyển v2 → v3. Muốn chuyển đổi cấu trúc, phải viết lại card theo chuẩn đích và cập nhật
@@ -298,8 +303,8 @@ asset reference tương ứng — ngoài phạm vi các lệnh hiện có.
 
 ```bash
 python scripts/charx.py validate "work/card"
-python scripts/charx.py pack "work/card" --out "out/card.charx"
-python scripts/charx.py diff "C:/path/card.charx" "out/card.charx"
+python scripts/charx.py pack "work/card" --out "out/"   # -> out/<tên card>.charx
+python scripts/charx.py diff "C:/path/card.charx" "out/<tên card>.charx"
 ```
 
 - `validate` phải 0 error. Warning có sẵn từ nguồn thì ghi lại, không cần sửa.
@@ -320,3 +325,4 @@ python scripts/charx.py diff "C:/path/card.charx" "out/card.charx"
 | `BOOK_W_DIVERGENT` | Hai bản lorebook khác nhau. Import dùng module; dùng `book sync` nếu muốn thống nhất. |
 | `text import` báo conflict | JSON và file text cùng đổi. Xem lại, hoặc `--force` để lấy bản text. |
 | `pack` từ chối vì validation | Đọc danh sách lỗi; sửa work rồi pack lại. `--force` chỉ dùng khi thật sự hiểu rủi ro. |
+| `Refusing to overwrite the source archive` | `--out` trỏ đúng file nguồn. Đổi sang thư mục khác hoặc bỏ `--out` để dùng tên card. |

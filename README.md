@@ -66,8 +66,9 @@ python scripts/charx.py book add "work/CharX File (6)" --name "Ghi chú mới" \
 python scripts/charx.py assets replace "work/CharX File (6)" "#2" "C:/path/anh-moi.webp"
 
 python scripts/charx.py validate "work/CharX File (6)"
-python scripts/charx.py pack "work/CharX File (6)" --out "out/CharX File (6)-edited.charx"
-python scripts/charx.py diff "C:/path/CharX File (6).charx" "out/CharX File (6)-edited.charx"
+python scripts/charx.py pack "work/CharX File (6)" --out "out/"
+#    -> out/변유리.charx (tên card đã làm sạch)
+python scripts/charx.py diff "C:/path/CharX File (6).charx" "out/변유리.charx"
 ```
 
 Kết quả thực tế trên thẻ ví dụ: 660 entry, 30,32 MB, 329 asset (29,98 MB), 36 mục lorebook
@@ -83,8 +84,14 @@ có **660/660 entry giống hệt từng byte** (kể cả `card.json` và `modu
 | `info SOURCE [--json]` | Tổng quan card/module/asset và số cảnh báo |
 | `unpack CHARX WORK [--force]` | Giải nén, giải mã module, tạo `_charx/manifest.json` |
 | `validate SOURCE [--deep]` | Kiểm tra cấu trúc và tham chiếu |
-| `pack WORK --out OUT` | Dựng `.charx` mới; mặc định giữ prefix JPEG |
+| `pack WORK [--out OUT]` | Dựng `.charx` mới; bỏ `--out` thì tự đặt tên theo tên card |
 | `diff LEFT RIGHT [--fail-on-diff]` | So sánh entry (byte) + JSON card/module (ngữ nghĩa) |
+
+`pack` đặt tên file xuất theo `data.name` của card (làm sạch ký tự cấm, giữ tiếng
+Hàn/Việt). Nếu `data.name` trống, lần lượt dùng tên lorebook, tên module, rồi tên archive
+nguồn. Bỏ `--out` để ghi `<tên card>.charx` vào thư mục hiện tại; nếu `--out` là thư mục
+(hoặc kết thúc bằng `/`), file được ghi vào trong thư mục đó. `pack` từ chối ghi đè chính
+file nguồn.
 
 `pack` tự động đồng bộ lorebook theo `--sync-book`:
 

@@ -453,10 +453,10 @@ def main():
         env["PYTHONIOENCODING"] = "utf-8"
         env["MSYS_NO_PATHCONV"] = "1"
 
-        def run(*args):
+        def run(*args, cwd=ROOT):
             proc = subprocess.run([sys.executable, CLI] + list(args),
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  env=env, cwd=ROOT)
+                                  env=env, cwd=cwd)
             output = (proc.stdout + proc.stderr).decode("utf-8", "replace")
             if proc.returncode != 0:
                 raise AssertionError("CLI %s failed (%d): %s"
@@ -473,6 +473,21 @@ def main():
         diff = json.loads(run("diff", fixture, out, "--fail-on-diff", "--json"))
         eq(diff["entries"]["added"], [], "CLI diff added")
         eq(diff["card_changes"], [], "CLI diff card")
+        auto_dir = os.path.join(tmp, "cli_auto")
+        os.makedirs(auto_dir)
+        run("pack", cli_work, cwd=auto_dir)
+        auto_out = os.path.join(auto_dir, "Selftest_Card.charx")
+        eq(os.path.isfile(auto_out), True, "pack default output uses card name")
+        out_dir = os.path.join(tmp, "cli_out_dir")
+        run("pack", cli_work, "--out", out_dir + os.sep, cwd=auto_dir)
+        eq(os.path.isfile(os.path.join(out_dir, "Selftest_Card.charx")), True,
+           "pack directory output uses card name")
+        try:
+            core.pack(cli_work, fixture, sync_book="off")
+        except core.CharxError as exc:
+            eq("Refusing to overwrite" in str(exc), True, "pack refuses source overwrite")
+        else:
+            raise AssertionError("pack accepted the source archive as output")
         run("set", cli_work, "/data/description", "--string", "CLI description")
         got = run("get", cli_work, "/data/description", "--raw")
         eq(got, "CLI description", "CLI get/set")

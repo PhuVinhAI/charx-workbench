@@ -67,7 +67,8 @@ python scripts/charx.py assets replace "work/card-name" "#2" "C:/path/new.png"
 python scripts/charx.py validate "work/card-name"
 
 # 6. Rebuild to a NEW file, keeping the JPEG prefix by default
-python scripts/charx.py pack "work/card-name" --out "out/card.charx"
+python scripts/charx.py pack "work/card-name" --out "out/"
+#    -> out/<card name>.charx; omit --out to write ./<card name>.charx
 
 # 7. Prove the delta (exit 1 means differences found)
 python scripts/charx.py diff "C:/path/card.charx" "out/card.charx"
@@ -80,7 +81,7 @@ python scripts/charx.py diff "C:/path/card.charx" "out/card.charx"
 | `info SOURCE [--json]` | Entry count, card/module summary, asset totals, validation counts |
 | `unpack CHARX WORK [--force]` | Extract and decode into an editable tree |
 | `validate SOURCE [--deep]` | Run structural/reference checks (archive or work dir) |
-| `pack WORK --out OUT [--sync-book MODE]` | Rebuild `.charx`; regenerates `module.risum` |
+| `pack WORK [--out OUT] [--sync-book MODE]` | Rebuild `.charx`; output defaults to `<card name>.charx` |
 | `diff LEFT RIGHT [--fail-on-diff]` | Compare entry bytes + semantic card/module JSON |
 | `get WORK POINTER [--target module] [--raw]` | Read a JSON value by RFC 6901 pointer |
 | `set WORK POINTER VALUE` | Write a JSON value; `--string TEXT`, `--file`, `--json-file` |

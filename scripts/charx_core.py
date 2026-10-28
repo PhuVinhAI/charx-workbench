@@ -1229,12 +1229,44 @@ def _should_store(entry_name, size):
     return size > 4 * 1024 * 1024 and ext not in ("json", "txt", "md", "html", "js", "risum")
 
 
-def pack(work, out_path, force=False, sync_book="auto", touch_date=False,
+def card_output_name(card, module, manifest):
+    """Sanitized output stem taken from the card name, then its lorebook/module."""
+    try:
+        data = card_data(card)
+    except CharxError:
+        data = {}
+    book = data.get("character_book")
+    module_name = None
+    if isinstance(module, dict):
+        try:
+            module_name = unwrap_module(module).get("name")
+        except CharxError:
+            module_name = None
+    candidates = [
+        data.get("name"),
+        book.get("name") if isinstance(book, dict) else None,
+        module_name,
+        os.path.splitext(os.path.basename(manifest.get("source") or ""))[0],
+    ]
+    for value in candidates:
+        if isinstance(value, str) and value.strip():
+            return clean_filename(value, fallback="card", max_len=80)
+    return "card"
+
+
+def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
          prefix_mode="keep", jpeg_prefix=None, compression_level=6):
     manifest, card, module = load_work(work)
+    if out_path is None or os.path.isdir(str(out_path)) or str(out_path).endswith(("/", "\\")):
+        filename = card_output_name(card, module, manifest) + ".charx"
+        out_path = filename if out_path is None else os.path.join(str(out_path), filename)
     out_abs = os.path.abspath(out_path)
     if not out_abs.lower().endswith(".charx"):
         out_abs += ".charx"
+    source = manifest.get("source") or ""
+    if source and os.path.isfile(source):
+        if os.path.normcase(os.path.realpath(source)) == os.path.normcase(os.path.realpath(out_abs)):
+            raise CharxError("Refusing to overwrite the source archive: %s" % out_abs)
     if os.path.dirname(out_abs) and not os.path.isdir(os.path.dirname(out_abs)):
         os.makedirs(os.path.dirname(out_abs))
 

@@ -635,7 +635,8 @@ def build_parser():
 
     pack = sub.add_parser("pack", help="rebuild a .charx from a work directory")
     pack.add_argument("work")
-    pack.add_argument("--out", "-o", required=True)
+    pack.add_argument("--out", "-o",
+                      help="output .charx path or directory; default: '<card name>.charx'")
     pack.add_argument("--force", action="store_true", help="write even when validation has errors")
     pack.add_argument("--sync-book", choices=["auto", "module-to-card", "card-to-module", "off"],
                       default="auto")
