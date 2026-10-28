@@ -216,6 +216,8 @@ def main():
         report = core.pack(work, out, sync_book="auto")
         eq(len(errors_of(report["validation"])), 0, "pack validation")
         eq(report["sync_book"]["direction"], "off", "pack auto did not rewrite lorebooks")
+        eq(report["copied_source"], True, "no-op pack copies the source archive")
+        eq(core.sha256_file(out), core.sha256_file(fixture), "no-op pack is byte-identical")
         left = read_entries(fixture)
         right = read_entries(out)
         eq(sorted(left), sorted(right), "entry name set")
@@ -223,6 +225,32 @@ def main():
         damaged = [name for name in left if left[name] != right[name]]
         eq(damaged, [], "byte-identical entries")
         eq(len(right), len(info["entries"]), "roundtrip entry count")
+
+    def t_noop_copy_invalidation():
+        fresh = os.path.join(tmp, "work_copycheck")
+        core.unpack(fixture, fresh, quiet=True)
+        manifest, _card, _module = core.load_work(fresh)
+        record = next(r for r in manifest["entries"] if r.get("name") == "misc/blob.bin")
+        target = core.os_path(fresh, record["local"])
+        original = core.read_bytes(target)
+        core.write_bytes(target, original + b"edited")
+        edited = os.path.join(tmp, "edited_out.charx")
+        report = core.pack(fresh, edited, sync_book="auto")
+        eq(report["copied_source"], False, "edited work recompresses instead of copying")
+        eq(read_entries(edited)["misc/blob.bin"], original + b"edited", "edit packed")
+        core.write_bytes(target, original)
+        reverted = os.path.join(tmp, "reverted_out.charx")
+        report = core.pack(fresh, reverted, sync_book="auto")
+        eq(report["copied_source"], True, "reverted work copies the source again")
+        eq(core.sha256_file(reverted), core.sha256_file(fixture), "reverted pack identical")
+        moved = os.path.join(tmp, "mutated_source.charx")
+        shutil.copyfile(fixture, moved)
+        moved_work = os.path.join(tmp, "work_mutated_source")
+        core.unpack(moved, moved_work, quiet=True)
+        core.write_bytes(moved, core.read_bytes(moved) + b"\x00")
+        changed = os.path.join(tmp, "mutated_out.charx")
+        report = core.pack(moved_work, changed, sync_book="auto")
+        eq(report["copied_source"], False, "changed source disables the copy path")
 
     def t_jpeg_prefix():
         prefix = b"\xff\xd8\xff\xe0" + b"JFIF-selftest-prefix" + b"\x00" * 8
@@ -233,7 +261,10 @@ def main():
         issues = validate_work(jpeg_work)
         eq([i["code"] for i in issues if i["level"] == "error"], [], "jpeg validate")
         out = os.path.join(tmp, "jpeg_out.charx")
-        core.pack(jpeg_work, out, sync_book="auto")
+        report = core.pack(jpeg_work, out, sync_book="auto")
+        eq(report["copied_source"], True, "unchanged jpeg card copies the source")
+        eq(core.sha256_file(out), core.sha256_file(jpeg_fixture),
+           "jpeg no-op pack is byte-identical")
         raw = core.read_bytes(out)
         eq(raw[:len(prefix)], prefix, "jpeg prefix preserved")
         left = read_entries(jpeg_fixture)
@@ -582,9 +613,270 @@ def main():
             pass
         else:
             raise AssertionError("CLI del did not remove the pointer")
+        book = json.loads(run("book", "list", cli_work, "--json"))
+        eq(book["source"], "module", "CLI book source")
+        created = json.loads(run("book", "folder", "add", cli_work,
+                                 "--name", "CLI Folder", "--json"))
+        moved = json.loads(run("book", "move", cli_work, "0",
+                               "--folder", "CLI Folder", "--json"))
+        eq(moved["folder"], created["id"], "CLI book move")
+        mod_assets = json.loads(run("module", "assets", "list", cli_work, "--json"))
+        eq(len(mod_assets["assets"]), 1, "CLI module asset list")
+        repl = os.path.join(tmp, "cli_repl.png")
+        core.write_bytes(repl, make_png((9, 9, 9, 255)))
+        replaced = json.loads(run("module", "assets", "replace", cli_work, "#0", repl,
+                                  "--json"))
+        eq(replaced["index"], 0, "CLI module asset replace")
+
+    def t_special_entries():
+        special = os.path.join(tmp, "special.charx")
+        entries = list(info["entries"]) + [
+            ("module.json", b"shadow module json\n"),
+            (".hidden-data", b"hidden payload\n"),
+            ("Text/notes.txt", b"reserved text dir\n"),
+            ("page.tmp", b"temp-looking entry\n"),
+        ]
+        write_zip(special, entries)
+        special_work = os.path.join(tmp, "work_special")
+        core.unpack(special, special_work, quiet=True)
+        manifest, _card, module = core.load_work(special_work)
+        eq(module is not None, True, "decoded module still loaded")
+        locals_ = {record["name"]: record["local"] for record in manifest["entries"]}
+        eq(locals_["module.json"].startswith("_charx/original/entries/"), True,
+           "colliding entry is stashed out of the way")
+        for name in ("module.json", ".hidden-data", "Text/notes.txt", "page.tmp"):
+            eq(os.path.isfile(core.os_path(special_work, locals_[name])), True,
+               "stashed file present: %s" % name)
+        core.write_bytes(os.path.join(special_work, "added", "new.bin"), b"new entry")
+        out = os.path.join(tmp, "special_out.charx")
+        report = core.pack(special_work, out, sync_book="auto")
+        eq(len(errors_of(report["validation"])), 0, "special pack validation")
+        left = read_entries(special)
+        right = read_entries(out)
+        eq(sorted(right), sorted(list(left) + ["added/new.bin"]),
+           "special entry names preserved and new file packed")
+        eq([n for n in left if left[n] != right[n]], [], "special entry bytes preserved")
+        eq(right["added/new.bin"], b"new entry", "new file content packed")
+
+    def t_text_keep_unmapped():
+        keep_work = os.path.join(tmp, "work_textkeep")
+        if os.path.isdir(keep_work):
+            shutil.rmtree(keep_work)
+        shutil.copytree(work, keep_work)
+        core.text_export(keep_work, force=True)
+        custom_dir = os.path.join(keep_work, "text", "notes")
+        os.makedirs(custom_dir)
+        user_file = os.path.join(custom_dir, "custom.md")
+        with open(user_file, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write("user note\n")
+        mapping = core.text_export(keep_work)
+        eq("notes/custom.md" in mapping["unmapped"], True, "user file reported unmapped")
+        eq(os.path.isfile(user_file), True, "user file survives re-export")
+        report = core.text_import(keep_work)
+        eq("notes/custom.md" in report["unmapped_files"], True,
+           "import reports unmapped file")
+        eq(os.path.isfile(user_file), True, "import leaves user file alone")
+
+    def t_missing_local_file():
+        miss_work = os.path.join(tmp, "work_missing")
+        if os.path.isdir(miss_work):
+            shutil.rmtree(miss_work)
+        shutil.copytree(work, miss_work)
+        target = os.path.join(miss_work, "notes", "readme.txt")
+        eq(os.path.isfile(target), True, "missing-file fixture exists")
+        os.remove(target)
+        codes = [item["code"] for item in errors_of(validate_work(miss_work))]
+        eq("ENTRY_E_MISSING" in codes, True, "missing local file detected: %s" % codes)
+        out = os.path.join(tmp, "missing.charx")
+        try:
+            core.pack(miss_work, out, sync_book="off")
+        except core.CharxError as exc:
+            eq("ENTRY_E_MISSING" in str(exc), True, "pack reports the missing entry")
+        else:
+            raise AssertionError("pack accepted a bundle with a missing local file")
+        eq(os.path.exists(out), False, "no output written for a missing local file")
+        core.pack(miss_work, out, sync_book="off", force=True)
+        right = read_entries(out)
+        eq("notes/readme.txt" in right, False, "forced pack drops the missing entry")
+        eq(len(right), len(info["entries"]) - 1, "forced pack entry count")
+
+    def t_diff_work_vs_archive():
+        fresh = os.path.join(tmp, "work_diff")
+        if os.path.isdir(fresh):
+            shutil.rmtree(fresh)
+        core.unpack(fixture, fresh, quiet=True)
+        out = os.path.join(tmp, "diff_out.charx")
+        core.pack(fresh, out, sync_book="auto")
+        diff = core.diff_sources(fresh, fixture)
+        eq(diff["entries"]["added"], [], "work/archive diff added")
+        eq(diff["entries"]["removed"], [], "work/archive diff removed")
+        eq(diff["entries"]["changed"], [], "work/archive diff changed")
+        eq(diff["module_changes"], [], "work/archive diff module")
+        eq(diff["card_changes"], [], "work/archive diff card")
+
+    def t_pointer_escaping():
+        doc = {"a/b": {"c~d": ["x", "y"]}}
+        eq(core.get_pointer(doc, "/a~1b/c~0d/1"), "y", "pointer escape get")
+        core.set_pointer(doc, "/a~1b/c~0d/0", "z")
+        eq(doc["a/b"]["c~d"][0], "z", "pointer escape set")
+        core.delete_pointer(doc, "/a~1b/c~0d/0")
+        eq(doc["a/b"]["c~d"], ["y"], "pointer escape delete")
+
+    def t_zip_metadata():
+        fresh = os.path.join(tmp, "work_zipmeta")
+        if os.path.isdir(fresh):
+            shutil.rmtree(fresh)
+        core.unpack(fixture, fresh, quiet=True)
+        out = os.path.join(tmp, "zipmeta_out.charx")
+        core.pack(fresh, out, sync_book="auto")
+        left = core.CharxArchive(fixture)
+        right = core.CharxArchive(out)
+        try:
+            left_meta = {info.filename: (info.compress_type, info.date_time)
+                         for info in left.infos if not info.filename.endswith("/")}
+            right_meta = {info.filename: (info.compress_type, info.date_time)
+                          for info in right.infos if not info.filename.endswith("/")}
+        finally:
+            left.close()
+            right.close()
+        eq(right_meta, left_meta, "zip compression and timestamps preserved")
+
+    def t_folder_limits():
+        deep_work = os.path.join(tmp, "work_deep")
+        if os.path.isdir(deep_work):
+            shutil.rmtree(deep_work)
+        core.unpack(fixture, deep_work, quiet=True)
+        _manifest, _card, module = core.load_work(deep_work)
+        lore = core.unwrap_module(module)["lorebook"]
+        for index in range(300):
+            entry = {"key": "\uf000folder:deep%d" % index, "comment": "F%d" % index,
+                     "content": "", "mode": "folder", "insertorder": 100,
+                     "alwaysActive": False, "secondkey": "", "selective": False}
+            if index:
+                entry["folder"] = "\uf000folder:deep%d" % (index - 1)
+            lore.append(entry)
+        core.save_module(deep_work, module)
+        try:
+            core.text_export(deep_work, force=True)
+        except core.CharxError as exc:
+            eq("deeper than" in str(exc), True, "deep folder export reports a clear error")
+        else:
+            raise AssertionError("deeply nested folders were exported")
+        _manifest, _card, module = core.load_work(deep_work)
+        lore = core.unwrap_module(module)["lorebook"]
+        entry = {"key": "\uf000folder:cyc-a", "comment": "Cycle A", "content": "",
+                 "mode": "folder", "insertorder": 100, "alwaysActive": False,
+                 "secondkey": "", "selective": False, "folder": "\uf000folder:cyc-b"}
+        lore.append(entry)
+        entry = {"key": "\uf000folder:cyc-b", "comment": "Cycle B", "content": "",
+                 "mode": "folder", "insertorder": 100, "alwaysActive": False,
+                 "secondkey": "", "selective": False, "folder": "\uf000folder:cyc-a"}
+        lore.append(entry)
+        lore[:] = [item for item in lore
+                   if not str(item.get("key") or "").startswith("\uf000folder:deep")]
+        core.save_module(deep_work, module)
+        listed = core.book_list(deep_work)
+        paths = sorted(item["path"] for item in listed["folders"]
+                       if item["path"].startswith("Cycle"))
+        eq(paths, ["Cycle B", "Cycle B/Cycle A"], "cyclic folders resolve to finite paths")
+        core.text_export(deep_work, force=True)
+
+    def t_book_folder_ops():
+        book_work = os.path.join(tmp, "work_bookfolders")
+        if os.path.isdir(book_work):
+            shutil.rmtree(book_work)
+        core.unpack(fixture, book_work, quiet=True)
+        parent = core.book_folder_add(book_work, "Parent")
+        eq(parent["id"].startswith("\uf000folder:"), True, "generated folder id")
+        child = core.book_folder_add(book_work, "Child", parent="Parent")
+        eq(child["parent"], parent["id"], "folder parent resolved by name")
+        added = core.book_add(book_work, "Nested lore", "nested", "Nested content.",
+                              folder="Parent/Child")
+        eq(added["entry"].get("folder"), child["id"], "book add resolves a folder path")
+        listed = core.book_list(book_work)
+        by_name = {item["comment"]: item for item in listed["entries"]}
+        eq(by_name["Nested lore"]["folder_path"], "Parent/Child", "list folder path")
+        eq(sorted(item["path"] for item in listed["folders"]),
+           ["Parent", "Parent/Child"], "folder summary paths")
+        mapping = core.text_export(book_work, force=True)
+        files = sorted(item["file"] for item in mapping["files"]
+                       if "/lorebook/" in item["file"])
+        eq("module/lorebook/Parent/Child/Nested_lore.md" in files, True,
+           "new folders appear in text export: %s" % files)
+        moved = core.book_move(book_work, added["index"], "")
+        eq(moved["folder"], None, "move to root")
+        _manifest, _card, module = core.load_work(book_work)
+        eq("folder" in core.unwrap_module(module)["lorebook"][added["index"]], False,
+           "folder field removed at root")
+        try:
+            core.book_move(book_work, parent["index"], "Parent/Child")
+        except core.CharxError as exc:
+            eq("descendant" in str(exc), True, "rejects moving a folder into its child")
+        else:
+            raise AssertionError("cycle-creating move accepted")
+
+    def t_module_assets():
+        ma_work = os.path.join(tmp, "work_modassets")
+        if os.path.isdir(ma_work):
+            shutil.rmtree(ma_work)
+        core.unpack(fixture, ma_work, quiet=True)
+        listed = core.module_asset_list(ma_work)["assets"]
+        eq(len(listed), 1, "module asset count")
+        eq(listed[0]["name"], "mod_asset", "module asset name")
+        eq(listed[0]["size"] > 0, True, "module asset size")
+        png2 = make_png((0, 200, 0, 255))
+        repl = os.path.join(tmp, "mod_repl.png")
+        core.write_bytes(repl, png2)
+        result = core.module_asset_replace(ma_work, "mod_asset", repl)
+        eq(result["index"], 0, "module asset replace index")
+        eq(os.path.isfile(core.os_path(ma_work, result["local"])), True,
+           "replacement stored")
+        _manifest, _card, module = core.load_work(ma_work)
+        eq(core.unwrap_module(module)["assets"][0][0], "mod_asset", "name kept")
+        out = os.path.join(tmp, "modasset_out.charx")
+        core.pack(ma_work, out, sync_book="off")
+        decoded = core.decode_module(read_entries(out)["module.risum"])
+        eq(decoded["assets"][0], png2, "replacement reached module.risum")
+        renamed = core.module_asset_replace(ma_work, "module-asset://0", repl,
+                                            name="renamed", ext="png")
+        eq(renamed["name"], "renamed", "module asset rename")
+        eq([item["name"] for item in core.module_asset_list(ma_work)["assets"]],
+           ["renamed"], "module asset list after rename")
+        out2 = os.path.join(tmp, "modasset_renamed.charx")
+        core.pack(ma_work, out2, sync_book="off")
+        decoded = core.decode_module(read_entries(out2)["module.risum"])
+        eq(decoded["assets"][0], png2, "renamed asset still packs")
+        try:
+            core.module_asset_replace(ma_work, "missing", repl)
+        except core.CharxError:
+            pass
+        else:
+            raise AssertionError("unknown module asset accepted")
+
+    def t_raw_path_safety():
+        safe_work = os.path.join(tmp, "work_rawsafe")
+        if os.path.isdir(safe_work):
+            shutil.rmtree(safe_work)
+        core.unpack(fixture, safe_work, quiet=True)
+        source = os.path.join(tmp, "badinput.txt")
+        core.write_bytes(source, b"nope")
+        for bad in ("text/evil.txt", "_charx/manifest.json", "Text/x.txt"):
+            try:
+                core.raw_put(safe_work, bad, source)
+            except core.CharxError:
+                pass
+            else:
+                raise AssertionError("raw put accepted reserved path: %s" % bad)
+        try:
+            core.raw_get(safe_work, "../card.json")
+        except core.CharxError:
+            pass
+        else:
+            raise AssertionError("raw get escaped the work directory")
 
     check("unpack + validate a synthetic v3 card", t_unpack_validate)
     check("no-op pack is byte-identical", t_noop_roundtrip)
+    check("edits disable the source-copy path", t_noop_copy_invalidation)
     check("charxJpeg prefix handling", t_jpeg_prefix)
     check("text export/import with conflict detection", t_text_edit)
     check("lorebook export mirrors folders", t_lore_folder_export)
@@ -596,6 +888,16 @@ def main():
     check("standalone module decode/encode", t_module_standalone)
     check("legacy v2 chara roundtrip", t_v2_roundtrip)
     check("CLI smoke test", t_cli)
+    check("unknown and hidden entries survive packing", t_special_entries)
+    check("text export keeps unmapped user files", t_text_keep_unmapped)
+    check("missing local files block pack", t_missing_local_file)
+    check("work/archive diff has no false changes", t_diff_work_vs_archive)
+    check("JSON pointer escaping", t_pointer_escaping)
+    check("zip compression and timestamps preserved", t_zip_metadata)
+    check("folder depth limit and cycles", t_folder_limits)
+    check("lorebook folder add/move/list", t_book_folder_ops)
+    check("module embedded assets list/replace", t_module_assets)
+    check("raw entry path safety", t_raw_path_safety)
 
     failed = [item for item in RESULTS if not item[1]]
     print("\n%d checks, %d passed, %d failed" % (len(RESULTS), len(RESULTS) - len(failed),

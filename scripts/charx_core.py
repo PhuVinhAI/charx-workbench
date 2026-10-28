@@ -25,6 +25,7 @@ import shutil
 import struct
 import sys
 import time
+import uuid
 import zipfile
 
 TOOL_NAME = "charx-workbench"
@@ -41,6 +42,7 @@ RESERVED_TOP_FILES = {"card.json", "module.json", "module.risum"}
 RESERVED_TOP_DIRS = {"_charx", "text"}
 
 LORE_MODES = {"normal", "constant", "multiple", "child", "folder"}
+MAX_LORE_FOLDER_DEPTH = 32
 TRIGGER_TYPES = {"start", "manual", "output", "input", "display", "request"}
 REGEX_TYPES = {"editinput", "editoutput", "editprocess", "editdisplay", "editrequest", "disabled", ""}
 
@@ -99,6 +101,26 @@ def sha256_bytes(data):
 
 def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def canonical_json_bytes(doc):
+    return json.dumps(doc, ensure_ascii=False, sort_keys=True,
+                      separators=(",", ":")).encode("utf-8")
+
+
+def canonical_json_sha256(doc):
+    try:
+        return sha256_bytes(canonical_json_bytes(doc))
+    except (TypeError, ValueError):
+        return None
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def read_bytes(path):
@@ -479,6 +501,18 @@ def local_path_for(entry_name, used):
 def os_path(work, rel):
     parts = [p for p in rel.split("/") if p]
     return os.path.join(work, *parts)
+
+
+def work_local_for_entry(entry_name, used):
+    """Local path for a source entry, kept out of tool-owned names and skip rules."""
+    rel = local_path_for(entry_name, used)
+    first = rel.split("/", 1)[0].lower()
+    base = rel.rsplit("/", 1)[-1]
+    lowered = rel.lower()
+    if (first in RESERVED_TOP_DIRS or lowered in RESERVED_TOP_FILES
+            or base.startswith(".") or lowered.endswith((".tmp", ".charx"))):
+        return local_path_for("_charx/original/entries/" + rel, used)
+    return rel
 
 
 # --------------------------------------------------------------------------
@@ -961,7 +995,7 @@ def unpack(charx_path, work_dir, force=False, quiet=False):
             record["encoding"] = "base64"
             record["decoded_size"] = len(decoded)
         else:
-            local = local_path_for(name, used_local)
+            local = work_local_for_entry(name, used_local)
             write_bytes(os_path(work, local), data)
             record["local"] = local
             record["packable"] = True
@@ -1055,9 +1089,13 @@ def unpack(charx_path, work_dir, force=False, quiet=False):
         "layout": layout,
         "card_entry": card_entry_name,
         "card_spec": card.get("spec") if isinstance(card, dict) else None,
+        "card_sha256": canonical_json_sha256(card),
         "module_entry": "module.risum" if module_raw is not None else None,
         "module_decoded": module_decoded,
+        "module_sha256": canonical_json_sha256(wrapper) if module_decoded else None,
         "module_error": module_error,
+        "prefix_sha256": sha256_bytes(archive.prefix),
+        "entries_sha256": entries_fingerprint(entries),
         "module_assets": module_assets,
         "baseline_books": book_baseline(card, decoded_module.get("wrapper") if module_decoded else None),
         "entries": entries,
@@ -1118,11 +1156,121 @@ def _manifest_by_local(manifest):
     return lookup
 
 
-def collect_pack_entries(work):
-    """Return [{entry, local, role, size}] for everything that should be zipped."""
-    manifest = load_manifest(work)
-    lookup = _manifest_by_local(manifest)
+def _manifest_entry_by_name(manifest, name):
+    for record in manifest.get("entries") or []:
+        if record.get("name") == name:
+            return record
+    return None
+
+
+def entries_fingerprint(entries):
+    """Hash of entry names and payload hashes, ignoring card/module copies."""
+    lines = []
+    for record in entries or []:
+        if record.get("role") in ("dir", "card", "module", "card-v2"):
+            continue
+        lines.append("%s\x00%s" % (record.get("name"), record.get("sha256")))
+    lines.sort()
+    return sha256_text("\n".join(lines))
+
+
+def work_matches_source(work, manifest, card, module, prefix, items, missing):
+    """True when packing would reproduce the unpacked archive byte-for-byte."""
+    if missing:
+        return False
+    source = manifest.get("source") or ""
+    recorded_source = manifest.get("source_sha256")
+    if not source or not recorded_source or not os.path.isfile(source):
+        return False
+    if sha256_file(source) != recorded_source:
+        return False
+    if manifest.get("card_sha256") != canonical_json_sha256(card):
+        return False
+    if module is not None:
+        if manifest.get("module_sha256") != canonical_json_sha256(module):
+            return False
+    else:
+        record = _manifest_entry_by_name(manifest, "module.risum")
+        if record is not None:
+            raw_path = os_path(work, record.get("local") or "")
+            if not record.get("local") or not os.path.isfile(raw_path):
+                return False
+            if sha256_file(raw_path) != record.get("sha256"):
+                return False
+    if sha256_bytes(prefix) != manifest.get("prefix_sha256"):
+        return False
+    if manifest.get("entries_sha256") != entries_fingerprint(manifest.get("entries")):
+        return False
+    packable = [
+        record for record in manifest.get("entries") or []
+        if record.get("packable") is not False
+        and record.get("role") not in ("dir", "card", "module", "card-v2")
+        and record.get("name") and record.get("local")
+        and not record.get("name").endswith("/")
+    ]
+    if len([item for item in items if item.get("role") not in ("card", "module")]) != len(packable):
+        return False
+    for record in packable:
+        data = read_bytes(os_path(work, record["local"]))
+        if record.get("encoding") == "base64":
+            data = base64.b64encode(data)
+        if sha256_bytes(data) != record.get("sha256"):
+            return False
+    return True
+
+
+def manifest_missing_files(work, manifest=None):
+    """Packable manifest entries whose local file no longer exists."""
+    manifest = manifest or load_manifest(work)
+    missing = []
+    for record in manifest.get("entries") or []:
+        if record.get("packable") is False:
+            continue
+        if record.get("role") in ("dir", "card", "module", "card-v2"):
+            continue
+        local = record.get("local")
+        if local and not os.path.isfile(os_path(work, local)):
+            missing.append({"name": record.get("name"), "local": local,
+                            "role": record.get("role")})
+    return missing
+
+
+def collect_pack_entries(work, manifest=None):
+    """Return [{entry, local, role, size, ...}] for everything that should be zipped.
+
+    Manifest records are packed first, so original entries survive even when
+    their local copy lives under `_charx/` (hidden names, `text/`, `*.tmp`, ...).
+    Files created outside the manifest are appended as new entries.
+    """
+    manifest = manifest or load_manifest(work)
     found = []
+    covered = set()
+    for order, record in enumerate(manifest.get("entries") or []):
+        if record.get("packable") is False:
+            continue
+        if record.get("role") in ("dir", "card", "module", "card-v2"):
+            continue
+        entry_name = record.get("name")
+        local = record.get("local")
+        if not entry_name or not local or entry_name.endswith("/"):
+            continue
+        if not is_safe_entry_name(entry_name):
+            raise CharxError("Unsafe entry name would be packed: %r" % entry_name)
+        full = os_path(work, local)
+        if not os.path.isfile(full):
+            continue  # manifest_missing_files() reports these
+        found.append({
+            "entry": entry_name,
+            "local": local,
+            "role": record.get("role", "other"),
+            "size": os.path.getsize(full),
+            "encoding": record.get("encoding"),
+            "compress_type": record.get("compress_type"),
+            "date_time": record.get("date_time"),
+            "sort_key": (0, order),
+        })
+        covered.add(local.lower())
+
     for root, dirs, files in os.walk(work):
         rel_root = os.path.relpath(root, work).replace("\\", "/")
         if rel_root == ".":
@@ -1132,6 +1280,8 @@ def collect_pack_entries(work):
         dirs[:] = [d for d in dirs if not d.startswith(".")]
         for filename in files:
             rel = (rel_root + "/" + filename) if rel_root else filename
+            if rel.lower() in covered:
+                continue
             if rel in RESERVED_TOP_FILES:
                 continue
             if rel.startswith("_charx/") or rel.startswith("text/"):
@@ -1142,29 +1292,22 @@ def collect_pack_entries(work):
             full = os_path(work, local)
             if not os.path.isfile(full):
                 continue
-            if local.lower() in lookup:
-                order, record = lookup[local.lower()]
-                entry_name = record.get("name")
-                role = record.get("role", "other")
-                sort_key = (0, order)
-            else:
-                if local.startswith("legacy_assets/"):
-                    raise CharxError(
-                        "legacy_assets file has no manifest mapping: %s" % local
-                    )
-                entry_name = local
-                role = "other"
-                sort_key = (1, natural_key(local))
-            if entry_name in RESERVED_TOP_FILES:
-                continue
+            if local.startswith("legacy_assets/"):
+                raise CharxError(
+                    "legacy_assets file has no manifest mapping: %s" % local
+                )
+            entry_name = local
             if not is_safe_entry_name(entry_name):
                 raise CharxError("Unsafe entry name would be packed: %r" % entry_name)
             found.append({
                 "entry": entry_name,
                 "local": local,
-                "role": role,
+                "role": "other",
                 "size": os.path.getsize(full),
-                "sort_key": sort_key,
+                "encoding": None,
+                "compress_type": None,
+                "date_time": None,
+                "sort_key": (1, natural_key(local)),
             })
     found.sort(key=lambda item: item["sort_key"])
 
@@ -1204,7 +1347,10 @@ def _module_asset_blobs(work, module, manifest):
             if source:
                 path = os_path(work, source["local"])
         elif uri.startswith(EMBEDED_PREFIX):
-            path = os_path(work, uri[len(EMBEDED_PREFIX):])
+            rel = norm_entry_name(uri[len(EMBEDED_PREFIX):])
+            if not is_safe_entry_name(rel):
+                raise CharxError("module.assets[%d] uses an unsafe path: %r" % (index, uri))
+            path = os_path(work, rel)
         elif uri.startswith("data:"):
             raise CharxError("module.assets[%d] uses a data: URI; store it as a file instead" % index)
         else:
@@ -1212,6 +1358,9 @@ def _module_asset_blobs(work, module, manifest):
             if os.path.isabs(candidate):
                 path = candidate
             else:
+                candidate = norm_entry_name(candidate)
+                if not is_safe_entry_name(candidate):
+                    raise CharxError("module.assets[%d] uses an unsafe path: %r" % (index, uri))
                 path = os_path(work, candidate)
         if not path or not os.path.isfile(path):
             raise CharxError(
@@ -1314,6 +1463,7 @@ def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
 
     module_bytes = None
     module_entry = None
+    module_record = _manifest_entry_by_name(manifest, "module.risum")
     if module is not None:
         module_bytes = encode_module(module, _module_asset_blobs(work, module, manifest))
         module_entry = "module.risum"
@@ -1337,7 +1487,8 @@ def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
     else:
         raise CharxError("Unknown prefix mode: %s" % prefix_mode)
 
-    items = collect_pack_entries(work)
+    items = collect_pack_entries(work, manifest)
+    missing = manifest_missing_files(work, manifest)
     if module_entry:
         items.append({
             "entry": module_entry,
@@ -1345,11 +1496,15 @@ def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
             "role": "module",
             "size": len(module_bytes),
             "bytes": module_bytes,
+            "encoding": None,
+            "compress_type": module_record.get("compress_type") if module_record else None,
+            "date_time": module_record.get("date_time") if module_record else None,
             "sort_key": (2, 0),
         })
 
     layout = manifest.get("layout", "v3")
     virtual = {}
+    card_record = _manifest_entry_by_name(manifest, "chara" if layout == "v2" else "card.json")
     if layout == "v2":
         compact = json.dumps(card, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         virtual["chara"] = base64.b64encode(compact)
@@ -1362,55 +1517,67 @@ def pack(work, out_path=None, force=False, sync_book="auto", touch_date=False,
     pending = []
     for order, item in enumerate(items):
         data = item.get("bytes")
-        if data is None:
-            data = read_bytes(os_path(work, item["local"]))
-        if item.get("role") == "v2-asset":
-            data = base64.b64encode(data)
+        size = item.get("size")
+        if data is not None:
+            size = len(data)
+        elif item.get("role") == "v2-asset" and size is not None:
+            size = 4 * ((size + 2) // 3)
         pending.append({
             "entry": item["entry"],
             "local": item.get("local"),
             "role": item.get("role", "other"),
             "data": data,
+            "encoding": item.get("encoding"),
+            "size": size,
             "date_time": item.get("date_time"),
+            "compress_type": item.get("compress_type"),
             "order": order,
         })
     for name, data in virtual.items():
         if name.startswith("_"):
             continue
         pending.append({"entry": name, "local": None, "role": "card", "data": data,
-                        "date_time": None, "order": len(pending)})
+                        "encoding": None, "size": len(data),
+                        "date_time": card_record.get("date_time") if card_record else None,
+                        "compress_type": card_record.get("compress_type") if card_record else None,
+                        "order": len(pending)})
     pending.sort(key=lambda item: (
         3 if item["role"] == "card" else (2 if item["role"] == "module" else 0),
         item["order"],
     ))
 
-    bundle = bundle_from_pending(pending, prefix, card, module)
+    bundle = bundle_from_pending(pending, prefix, card, module, work)
     issues = validate_bundle(bundle)
+    for item in missing:
+        issues.append(issue("error", "ENTRY_E_MISSING",
+                            "manifest entry %r has no local file: %s"
+                            % (item["name"], item["local"]), item["name"]))
     errors = [item for item in issues if item["level"] == "error"]
     if errors and not force:
         summary = "\n".join("  [%s] %s" % (item["code"], item["message"]) for item in errors[:20])
         raise CharxError("Validation failed (%d errors), not writing:\n%s" % (len(errors), summary))
 
-    zip_items = []
-    for item in pending:
-        zip_items.append({
-            "entry": item["entry"],
-            "local": item["local"],
-            "data": item["data"],
-            "date_time": item.get("date_time"),
-            "size": len(item["data"]),
-        })
-    _write_zip_with_data(out_abs, prefix, zip_items, compression_level)
+    copied_source = False
+    if (prefix_mode == "keep" and not touch_date and compression_level == 6
+            and (sync_report is None or sync_report.get("direction") == "off")
+            and work_matches_source(work, manifest, card, module, prefix, items, missing)):
+        tmp_path = out_abs + ".tmp"
+        shutil.copyfile(source, tmp_path)
+        os.replace(tmp_path, out_abs)
+        copied_source = True
+    else:
+        _write_zip_with_data(out_abs, prefix, pending, compression_level, work)
     return {
         "output": out_abs,
-        "entries": len(zip_items),
+        "entries": len(pending),
         "prefix_size": len(prefix),
         "sync_book": sync_report,
+        "copied_source": copied_source,
         "validation": issues,
     }
 
 
-def _write_zip_with_data(out_path, prefix, items, compression_level):
+def _write_zip_with_data(out_path, prefix, items, compression_level, work=None):
     tmp_path = out_path + ".tmp"
     with open(tmp_path, "wb") as handle:
         if prefix:
@@ -1420,14 +1587,24 @@ def _write_zip_with_data(out_path, prefix, items, compression_level):
             for item in items:
                 info = zipfile.ZipInfo(item["entry"], date_time=item.get("date_time") or time.localtime()[:6])
                 info.external_attr = (0o600 & 0xFFFF) << 16
-                if _should_store(item["entry"], item.get("size") or len(item["data"])):
-                    info.compress_type = zipfile.ZIP_STORED
-                else:
-                    info.compress_type = zipfile.ZIP_DEFLATED
+                compress_type = item.get("compress_type")
+                if compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                    if _should_store(item["entry"], item.get("size") or 0):
+                        compress_type = zipfile.ZIP_STORED
+                    else:
+                        compress_type = zipfile.ZIP_DEFLATED
+                info.compress_type = compress_type
+                data = item.get("data")
+                if data is None:
+                    if not item.get("local") or work is None:
+                        raise CharxError("No bytes available for entry %s" % item["entry"])
+                    data = read_bytes(os_path(work, item["local"]))
+                    if item.get("encoding") == "base64":
+                        data = base64.b64encode(data)
                 try:
-                    zf.writestr(info, item["data"], compresslevel=compression_level)
+                    zf.writestr(info, data, compresslevel=compression_level)
                 except TypeError:
-                    zf.writestr(info, item["data"])
+                    zf.writestr(info, data)
         finally:
             zf.close()
     os.replace(tmp_path, out_path)
@@ -1461,8 +1638,8 @@ class Bundle(object):
         return self._head(name, count)
 
 
-def bundle_from_archive(path):
-    archive = CharxArchive(path)
+def bundle_from_archive(path, archive=None):
+    archive = archive or CharxArchive(path)
     bundle = Bundle()
     bundle.source = archive.path
     bundle.names = [n for n in archive.names if not n.endswith("/")]
@@ -1500,8 +1677,9 @@ def bundle_from_archive(path):
     return bundle
 
 
-def bundle_from_work(work):
-    manifest, card, module = load_work(work)
+def bundle_from_work(work, manifest=None, card=None, module=None):
+    if manifest is None or card is None:
+        manifest, card, module = load_work(work)
     bundle = Bundle()
     bundle.source = os.path.abspath(work)
     bundle.card = card
@@ -1510,7 +1688,8 @@ def bundle_from_work(work):
     prefix_file = manifest.get("prefix_file")
     if prefix_file and os.path.isfile(os_path(work, prefix_file)):
         bundle.prefix = read_bytes(os_path(work, prefix_file))
-    entries = collect_pack_entries(work)
+    entries = collect_pack_entries(work, manifest)
+    bundle.missing_files = manifest_missing_files(work, manifest)
     if module is not None:
         module_obj = unwrap_module(module)
         assets = module_obj.get("assets") or []
@@ -1551,25 +1730,48 @@ def bundle_from_work(work):
     return bundle
 
 
-def bundle_from_pending(pending, prefix, card, module):
+def bundle_from_pending(pending, prefix, card, module, work=None):
     bundle = Bundle()
     bundle.source = "<pack>"
     bundle.prefix = prefix
     bundle.card = card
     bundle.module = module
-    data_by_name = {}
+    by_name = {}
     for item in pending:
-        data_by_name[item["entry"]] = item["data"]
-        bundle.sizes[item["entry"]] = len(item["data"])
-    bundle.names = list(data_by_name.keys())
+        by_name[item["entry"]] = item
+        bundle.sizes[item["entry"]] = item.get("size")
+    bundle.names = list(by_name.keys())
     bundle.name_set = set(bundle.names)
     bundle.layout = "v2" if ("chara" in bundle.name_set and "card.json" not in bundle.name_set) else "v3"
     bundle.module_raw_present = "module.risum" in bundle.name_set
     if module is not None:
         assets = unwrap_module(module).get("assets") or []
         bundle.module_asset_count = len(assets) if isinstance(assets, list) else 0
-    bundle._read = lambda name: data_by_name[name]
-    bundle._head = lambda name, count=32: data_by_name[name][:count]
+
+    def _load(item):
+        data = item.get("data")
+        if data is not None:
+            return data
+        if not item.get("local") or work is None:
+            raise CharxError("No bytes available for entry %s" % item["entry"])
+        data = read_bytes(os_path(work, item["local"]))
+        if item.get("encoding") == "base64":
+            data = base64.b64encode(data)
+        return data
+
+    def _read(name):
+        return _load(by_name[name])
+
+    def _head(name, count=32):
+        item = by_name[name]
+        if item.get("data") is None and item.get("encoding") != "base64":
+            if item.get("local") and work is not None:
+                with open(os_path(work, item["local"]), "rb") as handle:
+                    return handle.read(count)
+        return _load(item)[:count]
+
+    bundle._read = _read
+    bundle._head = _head
     return bundle
 
 
@@ -1617,6 +1819,10 @@ def validate_bundle(bundle, deep=False):
     for name in names:
         if not is_safe_entry_name(name):
             issues.append(issue("error", "ZIP_E_UNSAFE", "unsafe zip entry path: %r" % name, name))
+    for item in getattr(bundle, "missing_files", None) or []:
+        issues.append(issue("error", "ENTRY_E_MISSING",
+                            "manifest entry %r has no local file: %s"
+                            % (item["name"], item["local"]), item["name"]))
     if deep:
         for name in names:
             try:
@@ -1976,7 +2182,21 @@ def delete_pointer(doc, pointer):
     parts = pointer_parts(pointer)
     if not parts:
         raise CharxError("Cannot delete the document root")
-    parent = get_pointer(doc, "/" + "/".join(parts[:-1])) if len(parts) > 1 else doc
+    parent = doc
+    for part in parts[:-1]:
+        if isinstance(parent, dict):
+            if part not in parent:
+                raise CharxError("JSON pointer not found: %s (missing key %r)" % (pointer, part))
+            parent = parent[part]
+        elif isinstance(parent, list):
+            try:
+                parent = parent[int(part)]
+            except ValueError:
+                raise CharxError("JSON pointer needs an integer list index: %s" % pointer)
+            except IndexError:
+                raise CharxError("JSON pointer list index out of range: %s" % pointer)
+        else:
+            raise CharxError("JSON pointer traverses a scalar: %s" % pointer)
     last = parts[-1]
     if isinstance(parent, dict):
         if last not in parent:
@@ -2030,8 +2250,8 @@ def _lore_folder_ref(entry):
     return None
 
 
-def _lore_folder_paths(lore):
-    """Map each folder id to its exported directory segments (PocketRisu folders)."""
+def _lore_folders(lore):
+    """Return ({id: folder entry}, order, {id: parent id or None}) with cycles cut."""
     folders = {}
     order = []
     for entry in lore:
@@ -2048,56 +2268,124 @@ def _lore_folder_paths(lore):
         raw = _lore_folder_ref(folders[folder_id])
         parent[folder_id] = raw if raw in folders and raw != folder_id else None
 
-    state = {}
+    resolved = set()
+    for start in order:
+        if start in resolved:
+            continue
+        chain = []
+        seen = {}
+        node = start
+        while node is not None and node not in resolved and node not in seen:
+            seen[node] = len(chain)
+            chain.append(node)
+            node = parent.get(node)
+        if node is not None and node in seen:
+            parent[chain[-1]] = None
+        resolved.update(chain)
+    return folders, order, parent
 
-    def visit(folder_id):
-        state[folder_id] = 1
-        parent_id = parent.get(folder_id)
-        if parent_id is not None:
-            if state.get(parent_id) == 1:
-                parent[folder_id] = None
-            elif parent_id not in state:
-                visit(parent_id)
-        state[folder_id] = 2
 
-    for folder_id in order:
-        if folder_id not in state:
-            visit(folder_id)
+def _lore_folder_name(entry):
+    for field in ("comment", "name"):
+        value = entry.get(field)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _lore_folder_paths(lore):
+    """Map each folder id to its exported directory segments (PocketRisu folders)."""
+    folders, order, parent = _lore_folders(lore)
 
     children = {}
     for folder_id in order:
         children.setdefault(parent.get(folder_id), []).append(folder_id)
 
     segments = {}
-
-    def assign(parent_id):
-        used = set()
-        for folder_id in children.get(parent_id, []):
-            entry = folders[folder_id]
-            name = ""
-            for field in ("comment", "name"):
-                value = entry.get(field)
-                if isinstance(value, str) and value.strip():
-                    name = value
-                    break
-            segments[folder_id] = unique_filename(
-                clean_filename(name, fallback="folder"), used, "")
-            assign(folder_id)
-
-    assign(None)
+    used_by_parent = {None: set()}
+    stack = [(None, iter(children.get(None, ())))]
+    while stack:
+        parent_id, iterator = stack[-1]
+        try:
+            folder_id = next(iterator)
+        except StopIteration:
+            stack.pop()
+            continue
+        entry = folders[folder_id]
+        segments[folder_id] = unique_filename(
+            clean_filename(_lore_folder_name(entry), fallback="folder"),
+            used_by_parent.setdefault(parent_id, set()), "")
+        used_by_parent.setdefault(folder_id, set())
+        stack.append((folder_id, iter(children.get(folder_id, ()))))
 
     paths = {}
-
-    def build(folder_id):
-        if folder_id not in paths:
-            parent_id = parent.get(folder_id)
-            prefix = build(parent_id) if parent_id is not None else ()
-            paths[folder_id] = prefix + (segments[folder_id],)
-        return paths[folder_id]
-
     for folder_id in order:
-        build(folder_id)
+        chain = []
+        node = folder_id
+        while node is not None and node not in paths:
+            chain.append(node)
+            node = parent.get(node)
+        base = paths[node] if node is not None else ()
+        for item in reversed(chain):
+            base = base + (segments[item],)
+            paths[item] = base
+        if len(paths[folder_id]) > MAX_LORE_FOLDER_DEPTH:
+            raise CharxError(
+                "Lorebook folder nesting is deeper than %d levels; export aborted"
+                % MAX_LORE_FOLDER_DEPTH)
     return paths
+
+
+def _lore_folder_display_paths(lore):
+    """Map each folder id to its display-name path, root first."""
+    folders, order, parent = _lore_folders(lore)
+    names = {folder_id: _lore_folder_name(folders[folder_id]) or "folder"
+             for folder_id in order}
+    paths = {}
+    for folder_id in order:
+        chain = []
+        node = folder_id
+        while node is not None and node not in paths:
+            chain.append(node)
+            node = parent.get(node)
+        base = paths[node] if node is not None else ()
+        for item in reversed(chain):
+            base = base + (names[item],)
+            paths[item] = base
+        if len(paths[folder_id]) > MAX_LORE_FOLDER_DEPTH:
+            raise CharxError(
+                "Lorebook folder nesting is deeper than %d levels"
+                % MAX_LORE_FOLDER_DEPTH)
+    return paths
+
+
+def _resolve_lore_folder(lore, target):
+    """Resolve a folder id, display name or 'A/B' path to a folder id."""
+    needle = str(target or "").strip()
+    if not needle:
+        return None
+    folders, order, _parent = _lore_folders(lore)
+    if needle in folders:
+        return needle
+    lowered = needle.replace("\\", "/").strip("/").lower()
+    if not lowered:
+        return None
+    display = _lore_folder_display_paths(lore)
+    exported = _lore_folder_paths(lore)
+    for paths in (display, exported):
+        exact = [folder_id for folder_id in order
+                 if "/".join(paths.get(folder_id, ())).lower() == lowered]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
+            raise CharxError("Lorebook folder path is ambiguous: %s" % target)
+    named = [folder_id for folder_id in order
+             if (display.get(folder_id) or ("",))[-1].lower() == lowered]
+    if len(named) == 1:
+        return named[0]
+    if len(named) > 1:
+        raise CharxError("Lorebook folder name is ambiguous: %s" % target)
+    raise CharxError("Unknown lorebook folder: %s" % target)
 
 
 def _lore_folder_dir_names(folder_paths):
@@ -2196,6 +2484,16 @@ def _text_targets(card, module, include_empty=False):
     return targets
 
 
+def _prune_empty_dirs(root):
+    for current, _dirs, _files in os.walk(root, topdown=False):
+        if os.path.abspath(current) == os.path.abspath(root):
+            continue
+        try:
+            os.rmdir(current)
+        except OSError:
+            pass
+
+
 def text_export(work, force=False, include_empty=False):
     manifest, card, module = load_work(work)
     text_dir = os.path.join(work, "text")
@@ -2229,9 +2527,20 @@ def text_export(work, force=False, include_empty=False):
                 % (len(changed), ", ".join(changed[:5]))
             )
     targets = _text_targets(card, module, include_empty=include_empty)
-    if os.path.isdir(text_dir):
-        shutil.rmtree(text_dir)
-    os.makedirs(text_dir)
+    if not os.path.isdir(text_dir):
+        os.makedirs(text_dir)
+    if os.path.isfile(map_path):
+        try:
+            old_map = load_json_file(map_path)
+        except CharxError:
+            old_map = {}
+        for item in old_map.get("files") or []:
+            rel = item.get("file") or ""
+            if not rel:
+                continue
+            old_path = os.path.join(text_dir, rel.replace("/", os.sep))
+            if os.path.isfile(old_path):
+                os.remove(old_path)
     records = []
     for item in targets:
         doc = card if item["target"] == "card" else module
@@ -2254,11 +2563,20 @@ def text_export(work, force=False, include_empty=False):
             "sha256": sha256_text(value),
             "len": len(value),
         })
+    _prune_empty_dirs(text_dir)
+    known = set(item["file"] for item in records)
+    unmapped = []
+    for root, _dirs, files in os.walk(text_dir):
+        for filename in files:
+            rel = os.path.relpath(os.path.join(root, filename), text_dir).replace(os.sep, "/")
+            if rel != "_map.json" and rel not in known:
+                unmapped.append(rel)
     mapping = {
         "tool": TOOL_NAME,
         "tool_version": TOOL_VERSION,
         "exported_at": int(time.time()),
         "files": records,
+        "unmapped": sorted(unmapped),
     }
     write_json(map_path, mapping, indent=2)
     return mapping
@@ -2392,7 +2710,7 @@ def find_asset(card, manifest, work, target):
                 "uri": None,
                 "card_entry": None,
             }
-    if os.path.isfile(os_path(work, needle)):
+    if is_safe_entry_name(needle) and os.path.isfile(os_path(work, needle)):
         return {
             "index": None,
             "entry": needle,
@@ -2414,6 +2732,8 @@ def _asset_desc(card, manifest, work, index, entry):
             % (index, uri[:80])
         )
     path = norm_entry_name(uri[len(EMBEDED_PREFIX):])
+    if not is_safe_entry_name(path):
+        raise CharxError("Asset URI escapes the work directory: %s" % uri)
     lookup = _manifest_by_local(manifest)
     local = None
     record = lookup.get(path.lower())
@@ -2729,12 +3049,14 @@ def asset_gc(work, move=False, yes=False):
 def book_list(work):
     _manifest, card, module = load_work(work)
     source, lore = effective_lore(card, module)
+    folders_map, order, parent = _lore_folders(lore)
+    display = _lore_folder_display_paths(lore)
     result = []
     for index, entry in enumerate(lore):
         if not isinstance(entry, dict):
             continue
         if source == "module":
-            result.append({
+            view = {
                 "index": index,
                 "keys": entry.get("key"),
                 "secondkey": entry.get("secondkey"),
@@ -2744,9 +3066,9 @@ def book_list(work):
                 "insertorder": entry.get("insertorder"),
                 "comment": entry.get("comment"),
                 "content_len": len(entry.get("content") or ""),
-            })
+            }
         else:
-            result.append({
+            view = {
                 "index": index,
                 "keys": ", ".join(entry.get("keys") or []),
                 "secondkey": ", ".join(entry.get("secondary_keys") or []),
@@ -2756,8 +3078,48 @@ def book_list(work):
                 "insertorder": entry.get("insertion_order"),
                 "comment": entry.get("name") or entry.get("comment"),
                 "content_len": len(entry.get("content") or ""),
-            })
-    return {"source": source, "entries": result}
+            }
+        if (entry.get("mode") or "normal") == "folder":
+            folder_id = _lore_folder_id(entry)
+        else:
+            folder_id = _lore_folder_ref(entry)
+        view["folder"] = folder_id
+        view["folder_path"] = "/".join(display.get(folder_id, ()))
+        result.append(view)
+    folders = []
+    for folder_id in order:
+        folders.append({
+            "id": folder_id,
+            "name": _lore_folder_name(folders_map[folder_id]),
+            "path": "/".join(display.get(folder_id, ())),
+            "parent": parent.get(folder_id),
+        })
+    return {"source": source, "entries": result, "folders": folders}
+
+
+def _book_append(work, source, card, module, lore_entry):
+    """Append a module-shaped lore entry to the effective lorebook, return its index."""
+    if source == "module":
+        module_obj = unwrap_module(module)
+        lore = module_obj.get("lorebook")
+        if not isinstance(lore, list):
+            lore = []
+            module_obj["lorebook"] = lore
+        lore.append(lore_entry)
+        save_module(work, module)
+        return len(lore) - 1
+    data_doc = card_data(card)
+    book = data_doc.get("character_book")
+    if not isinstance(book, dict):
+        book = {}
+        data_doc["character_book"] = book
+    entries = book.get("entries")
+    if not isinstance(entries, list):
+        entries = []
+        book["entries"] = entries
+    entries.append(lore_to_charbook(lore_entry))
+    save_card(work, card)
+    return len(entries) - 1
 
 
 def book_add(work, name, keys, content, mode="normal", insertorder=100,
@@ -2786,30 +3148,82 @@ def book_add(work, name, keys, content, mode="normal", insertorder=100,
         "useRegex": bool(use_regex),
     }
     if folder:
-        lore_entry["folder"] = folder
-    if source == "module":
-        module_obj = unwrap_module(module)
-        lore = module_obj.get("lorebook")
-        if not isinstance(lore, list):
-            lore = []
-            module_obj["lorebook"] = lore
-        lore.append(lore_entry)
-        save_module(work, module)
-        index = len(lore) - 1
-    else:
-        data_doc = card_data(card)
-        book = data_doc.get("character_book")
-        if not isinstance(book, dict):
-            book = {}
-            data_doc["character_book"] = book
-        entries = book.get("entries")
-        if not isinstance(entries, list):
-            entries = []
-            book["entries"] = entries
-        entries.append(lore_to_charbook(lore_entry))
-        save_card(work, card)
-        index = len(entries) - 1
+        parent_id = _resolve_lore_folder(_lore, folder)
+        if parent_id is None:
+            raise CharxError("Unknown lorebook folder: %s" % folder)
+        lore_entry["folder"] = parent_id
+    index = _book_append(work, source, card, module, lore_entry)
     return {"source": source, "index": index, "entry": lore_entry}
+
+
+def book_folder_add(work, name, parent=None, folder_id=None):
+    manifest, card, module = load_work(work)
+    source, lore = effective_lore(card, module)
+    if source is None:
+        raise CharxError("Card has neither module.lorebook nor character_book.entries")
+    name = (name or "").strip()
+    if not name:
+        raise CharxError("Folder name is required")
+    if folder_id is None:
+        folder_id = "\uf000folder:" + str(uuid.uuid4())
+    else:
+        folder_id = folder_id.strip()
+        if not folder_id:
+            raise CharxError("Folder id is empty")
+    existing = set(_lore_folder_id(entry) for entry in lore if isinstance(entry, dict))
+    if folder_id in existing:
+        raise CharxError("A lorebook folder with id %r already exists" % folder_id)
+    parent_id = _resolve_lore_folder(lore, parent)
+    lore_entry = {
+        "key": folder_id,
+        "secondkey": "",
+        "insertorder": 100,
+        "comment": name,
+        "content": "",
+        "mode": "folder",
+        "alwaysActive": False,
+        "selective": False,
+        "extentions": {},
+        "useRegex": False,
+    }
+    if parent_id is not None:
+        lore_entry["folder"] = parent_id
+    index = _book_append(work, source, card, module, lore_entry)
+    return {"source": source, "index": index, "id": folder_id,
+            "parent": parent_id, "entry": lore_entry}
+
+
+def book_move(work, index, target):
+    manifest, card, module = load_work(work)
+    source, lore = effective_lore(card, module)
+    if source is None:
+        raise CharxError("Card has no lorebook")
+    if index < 0 or index >= len(lore):
+        raise CharxError("Lorebook index out of range: %d (count=%d)" % (index, len(lore)))
+    entry = lore[index]
+    if not isinstance(entry, dict):
+        raise CharxError("Lorebook entry %d is not an object" % index)
+    target_id = _resolve_lore_folder(lore, target)
+    if target_id is not None:
+        folder_id = _lore_folder_id(entry)
+        if folder_id is not None:
+            _folders, _order, parent = _lore_folders(lore)
+            node = target_id
+            while node is not None:
+                if node == folder_id:
+                    raise CharxError(
+                        "Cannot move a lorebook folder into itself or a descendant")
+                node = parent.get(node)
+        entry["folder"] = target_id
+    else:
+        entry.pop("folder", None)
+    if source == "module":
+        save_module(work, module)
+    else:
+        save_card(work, card)
+    display = _lore_folder_display_paths(lore)
+    return {"source": source, "index": index, "folder": target_id,
+            "path": list(display.get(target_id, ()))}
 
 
 def book_remove(work, index, yes=False):
@@ -2837,13 +3251,11 @@ def snapshot_source(path):
     if os.path.isdir(path):
         manifest, card, module = load_work(path)
         entries = {}
-        for item in collect_pack_entries(path):
+        for item in collect_pack_entries(path, manifest):
             entries[item["entry"]] = {
                 "size": item["size"],
                 "sha256": sha256_bytes(read_bytes(os_path(path, item["local"]))),
             }
-        if module is not None:
-            entries["module.risum"] = {"size": None, "sha256": "<regenerated>"}
         prefix = b""
         if manifest.get("prefix_file") and os.path.isfile(os_path(path, manifest["prefix_file"])):
             prefix = read_bytes(os_path(path, manifest["prefix_file"]))
@@ -2868,7 +3280,7 @@ def snapshot_source(path):
             "size": info.file_size,
             "sha256": sha256_bytes(archive.read(info.filename)),
         }
-    bundle = bundle_from_archive(path)
+    bundle = bundle_from_archive(path, archive=archive)
     result = {
         "kind": "charx",
         "path": archive.path,
@@ -3006,6 +3418,7 @@ def info_source(path):
         source_kind = "work"
         source_path = os.path.abspath(path)
         archive_size = None
+        bundle = bundle_from_work(path, manifest=manifest, card=card, module=module)
     else:
         archive = CharxArchive(path)
         names = [n for n in archive.names if not n.endswith("/")]
@@ -3014,10 +3427,9 @@ def info_source(path):
         source_kind = "charx"
         source_path = archive.path
         archive_size = archive.raw_size
-        bundle = bundle_from_archive(path)
+        bundle = bundle_from_archive(path, archive=archive)
         card = bundle.card
         module = bundle.module
-        archive.close()
 
     assets = card_asset_entries(card) if isinstance(card, dict) else []
     asset_by_type = {}
@@ -3071,7 +3483,6 @@ def info_source(path):
             else:
                 ext_fields[key] = {"type": type(value).__name__, "value": value}
 
-    bundle = bundle_from_work(path) if os.path.isdir(path) else bundle_from_archive(path)
     issues = validate_bundle(bundle)
     if getattr(bundle, "_archive", None) is not None:
         bundle._archive.close()
@@ -3146,15 +3557,19 @@ def raw_get(work, entry):
                 raise CharxError("Local file is missing: %s" % full)
             return record.get("name"), read_bytes(full)
     full = os_path(work, needle)
-    if os.path.isfile(full):
+    if is_safe_entry_name(needle) and os.path.isfile(full):
         return needle, read_bytes(full)
     raise CharxError("Entry not found: %s" % entry)
 
 
 def raw_put(work, entry, source_file):
     manifest = load_manifest(work)
-    if entry in RESERVED_TOP_FILES:
+    normalized = norm_entry_name(entry)
+    lowered = normalized.lower()
+    if normalized in RESERVED_TOP_FILES:
         raise CharxError("Use the dedicated command for %s" % entry)
+    if lowered.startswith("_charx/") or lowered.startswith("text/"):
+        raise CharxError("Entry path is reserved for the work directory: %s" % entry)
     if not is_safe_entry_name(entry):
         raise CharxError("Unsafe entry name: %r" % entry)
     data = read_bytes(source_file)
@@ -3168,7 +3583,7 @@ def raw_put(work, entry, source_file):
         local = record.get("local")
     else:
         used = set(lookup.keys())
-        local = local_path_for(entry, used)
+        local = work_local_for_entry(entry, used)
         if entry.startswith("assets/"):
             role = "asset"
         elif entry.startswith("x_meta/"):
@@ -3248,23 +3663,26 @@ def module_encode_file(module_json, out_risum, assets_dir=None):
         if not isinstance(entry, list) or len(entry) < 2:
             raise CharxError("module.assets[%d] must be [name, uri, ext]" % index)
         uri = entry[1] or ""
-        candidates = []
         if uri.startswith(MODULE_ASSET_SCHEME):
-            index_value = int(uri[len(MODULE_ASSET_SCHEME):])
-            candidates.append(index_value)
-        elif uri == "":
-            candidates.append(index)
-        if assets_dir:
-            ext = str(entry[2] or "bin")
-            prefix = "%04d_" % (candidates[0] if candidates else index)
-            for filename in os.listdir(assets_dir):
-                if filename.startswith(prefix):
-                    candidates.append(os.path.join(assets_dir, filename))
+            try:
+                int(uri[len(MODULE_ASSET_SCHEME):])
+            except ValueError:
+                raise CharxError("module.assets[%d] has a bad module-asset URI: %r"
+                                 % (index, uri))
         path = None
         if uri.startswith(EMBEDED_PREFIX):
-            path = os.path.join(base, uri[len(EMBEDED_PREFIX):])
-        elif uri and not uri.startswith(MODULE_ASSET_SCHEME) and uri != "":
-            path = uri if os.path.isabs(uri) else os.path.join(base, uri)
+            rel = norm_entry_name(uri[len(EMBEDED_PREFIX):])
+            if not is_safe_entry_name(rel):
+                raise CharxError("module.assets[%d] uses an unsafe path: %r" % (index, uri))
+            path = os_path(base, rel)
+        elif uri and not uri.startswith(MODULE_ASSET_SCHEME):
+            if os.path.isabs(uri):
+                path = uri
+            else:
+                rel = norm_entry_name(uri)
+                if not is_safe_entry_name(rel):
+                    raise CharxError("module.assets[%d] uses an unsafe path: %r" % (index, uri))
+                path = os_path(base, rel)
         if path is None or not os.path.isfile(path):
             if assets_dir:
                 prefix = "%04d_" % index
@@ -3278,6 +3696,167 @@ def module_encode_file(module_json, out_risum, assets_dir=None):
     raw = encode_module(wrapper, blobs)
     write_bytes(out_risum, raw)
     return {"bytes": len(raw), "assets": len(blobs)}
+
+
+# --------------------------------------------------------------------------
+# embedded module assets
+# --------------------------------------------------------------------------
+
+def _module_assets_meta(module):
+    if not isinstance(module, dict):
+        raise CharxError("Work directory has no decoded module.json")
+    module_obj = unwrap_module(module)
+    meta = module_obj.get("assets")
+    if meta is None:
+        return module_obj, []
+    if not isinstance(meta, list):
+        raise CharxError("module.assets must be a list")
+    return module_obj, meta
+
+
+def _module_asset_records(manifest):
+    records = {}
+    for item in manifest.get("module_assets") or []:
+        if isinstance(item, dict) and item.get("index") is not None:
+            records[int(item["index"])] = item
+    return records
+
+
+def module_asset_list(work):
+    manifest, _card, module = load_work(work)
+    _module_obj, meta = _module_assets_meta(module)
+    records = _module_asset_records(manifest)
+    result = []
+    for index, entry in enumerate(meta):
+        record = records.get(index) or {}
+        name = None
+        ext = None
+        uri = None
+        if isinstance(entry, list):
+            if entry:
+                name = entry[0]
+            if len(entry) > 1:
+                uri = entry[1]
+            if len(entry) > 2:
+                ext = entry[2]
+        local = record.get("local")
+        size = None
+        if local and os.path.isfile(os_path(work, local)):
+            size = os.path.getsize(os_path(work, local))
+        result.append({
+            "index": index,
+            "name": str(name or record.get("name") or ("asset_%d" % index)),
+            "ext": str(ext or record.get("ext") or "bin"),
+            "local": local,
+            "size": size,
+            "uri": uri,
+        })
+    return {"assets": result}
+
+
+def _module_asset_target(module, manifest, target):
+    _module_obj, meta = _module_assets_meta(module)
+    records = _module_asset_records(manifest)
+    needle = str(target or "").strip()
+    if needle.lower().startswith(MODULE_ASSET_SCHEME):
+        needle = needle[len(MODULE_ASSET_SCHEME):]
+    if needle.startswith("#"):
+        needle = needle[1:]
+    index = None
+    if needle.isdigit():
+        index = int(needle)
+    else:
+        lowered = needle.lower()
+        if not lowered:
+            raise CharxError("Module asset target is empty")
+        matches = []
+        for candidate, entry in enumerate(meta):
+            names = set()
+            if isinstance(entry, list) and entry and entry[0]:
+                names.add(str(entry[0]).lower())
+            record = records.get(candidate) or {}
+            if record.get("name"):
+                names.add(str(record["name"]).lower())
+            if record.get("local"):
+                names.add(os.path.basename(str(record["local"])).lower())
+            if lowered in names:
+                matches.append(candidate)
+        if not matches:
+            raise CharxError("No module asset matches: %s" % target)
+        if len(matches) > 1:
+            raise CharxError("Module asset target is ambiguous: %s (indexes %s)"
+                             % (target, ", ".join(str(m) for m in matches)))
+        index = matches[0]
+    if index < 0 or index >= len(meta):
+        raise CharxError("Module asset index out of range: %d (count=%d)"
+                         % (index, len(meta)))
+    entry = meta[index]
+    if not isinstance(entry, list) or len(entry) < 2:
+        raise CharxError("module.assets[%d] is not [name, uri, ext]" % index)
+    return index, entry, records.get(index)
+
+
+def module_asset_replace(work, target, source_file, name=None, ext=None):
+    manifest, _card, module = load_work(work)
+    index, entry, record = _module_asset_target(module, manifest, target)
+    data = read_bytes(source_file)
+    if not data:
+        raise CharxError("Replacement file is empty: %s" % source_file)
+    previous_uri = entry[1] if len(entry) > 1 else None
+    new_name = str(name).strip() if name else str(entry[0] or ("asset_%d" % index))
+    if not new_name:
+        new_name = "asset_%d" % index
+    new_ext = (ext or (entry[2] if len(entry) > 2 else "") or "").lower().lstrip(".")
+    if not new_ext:
+        new_ext = detect_ext(data[:64]) or "bin"
+    filename = "%04d_%s.%s" % (index, safe_component(new_name), safe_component(new_ext))
+    local = "_charx/module_assets/" + filename
+    used = set()
+    for item in manifest.get("module_assets") or []:
+        if not isinstance(item, dict) or item.get("index") is None:
+            continue
+        if int(item["index"]) != index and item.get("local"):
+            used.add(str(item["local"]).lower())
+    candidate = local
+    counter = 1
+    while candidate.lower() in used:
+        candidate = "_charx/module_assets/%04d_%s_%d.%s" % (
+            index, safe_component(new_name), counter, safe_component(new_ext))
+        counter += 1
+    local = candidate
+    old_local = record.get("local") if record else None
+    write_bytes(os_path(work, local), data)
+    if old_local and old_local.lower() != local.lower():
+        old_path = os_path(work, old_local)
+        if os.path.isfile(old_path):
+            os.remove(old_path)
+    while len(entry) < 3:
+        entry.append("")
+    original_uri = record.get("original_uri") if record else previous_uri
+    if isinstance(original_uri, str) and original_uri.startswith(MODULE_ASSET_SCHEME):
+        original_uri = None
+    entry[0] = new_name
+    entry[1] = MODULE_ASSET_SCHEME + str(index)
+    entry[2] = new_ext
+    record = record or {"index": index}
+    record.update({"index": index, "local": local, "name": new_name, "ext": new_ext})
+    record["original_uri"] = original_uri
+    module_assets = [item for item in manifest.get("module_assets") or []
+                     if not (isinstance(item, dict)
+                             and item.get("index") is not None
+                             and int(item["index"]) == index)]
+    module_assets.append(record)
+    module_assets.sort(key=lambda item: int(item.get("index", 0)))
+    manifest["module_assets"] = module_assets
+    save_module(work, module)
+    save_manifest(work, manifest)
+    detected = detect_ext(data[:64])
+    warning = None
+    if detected and new_ext and detected != new_ext:
+        warning = ("module asset is stored as .%s but replacement bytes look like .%s; "
+                   "the metadata is kept so references stay valid" % (new_ext, detected))
+    return {"index": index, "name": new_name, "ext": new_ext, "local": local,
+            "entry": entry, "bytes": len(data), "warning": warning}
 
 
 # --------------------------------------------------------------------------

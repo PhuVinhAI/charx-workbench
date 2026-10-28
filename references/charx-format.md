@@ -46,6 +46,21 @@ There are two card layouts:
 PocketRisu refuses a `card.json` source unless `spec === "chara_card_v3"`; a `chara` source
 goes through the v2 import path.
 
+`unpack` records every archive entry in `_charx/manifest.json` (name, local path, role,
+size, SHA-256, compression type, DOS timestamp) plus baseline fingerprints of the source
+(`card_sha256`, `module_sha256`, `prefix_sha256`, `entries_sha256`). `pack` packs manifest
+records first, so an unknown entry survives even when its name collides with tool-owned
+paths (`text/`, `_charx/`, `module.json`, dotfiles, `*.tmp`); those copies are stashed under
+`_charx/original/entries/`. Files created in the work tree outside the manifest are added
+as new entries. If a packable manifest record lost its local file, the bundle reports
+`ENTRY_E_MISSING` and packing stops unless `--force` is given.
+
+When nothing changed — source hash, card, module and prefix fingerprints, manifest entry
+list, and every local file hash all still match — `pack` copies the source archive
+byte-for-byte, so the whole output file has the same SHA-256 as the source. After any edit
+it rebuilds the ZIP and reuses the original DEFLATE/STORED choice and timestamp per entry:
+unchanged entries stay byte-identical, while edited entries get a fresh deflate stream.
+
 ## 2. `card.json` (V3)
 
 ```json

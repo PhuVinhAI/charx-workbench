@@ -34,7 +34,7 @@ charx-workbench/
   references/editing-recipes.md # công thức cho từng loại chỉnh sửa
   references/validation-codes.md # toàn bộ mã lỗi/cảnh báo
   LICENSES/                    # giấy phép rpack (MIT / AGPL) + NOTICE
-  tests/selftest.py            # 12 kiểm thử tổng hợp, không cần card thật
+  tests/selftest.py            # 24 kiểm thử tổng hợp, không cần card thật
 ```
 
 ## Bắt đầu nhanh
@@ -72,8 +72,17 @@ python scripts/charx.py diff "C:/path/CharX File (6).charx" "out/변유리.charx
 ```
 
 Kết quả thực tế trên thẻ ví dụ: 660 entry, 30,32 MB, 329 asset (29,98 MB), 36 mục lorebook
-lấy từ module, module có 36 lore + 4 regex + 1 trigger. Khi chưa sửa gì, `pack` cho ra file
-có **660/660 entry giống hệt từng byte** (kể cả `card.json` và `module.risum`).
+lấy từ module, module có 36 lore + 4 regex + 1 trigger. Khi chưa sửa gì, `pack` sao chép
+nguyên file nguồn: **hash SHA-256 của cả file đầu ra trùng nguồn** (31.795.982 byte), và
+tất nhiên 660/660 entry giống hệt từng byte. Khi có sửa, `pack` dựng lại archive, giữ kiểu
+nén (DEFLATE/STORED) và timestamp của từng entry; các entry không sửa vẫn giống hệt từng
+byte, còn stream DEFLATE của entry bị đổi được nén lại.
+
+`pack` lấy `_charx/manifest.json` làm nguồn sự thật cho các entry gốc, nên entry lạ, entry
+ẩn, tên trùng thư mục dành riêng của tool (`text/`, `_charx/`, `module.json`…) vẫn được
+đóng gói lại đúng tên và đúng byte. File mới tạo trong work được tự thêm vào archive. Nếu
+một entry có trong manifest mà file local đã bị xóa, `validate` báo `ENTRY_E_MISSING` và
+`pack` từ chối chạy (trừ khi `--force`).
 
 ## Các lệnh
 
@@ -142,20 +151,28 @@ cấm, tên thiết bị như `CON`) cũng được làm sạch.
 
 `text/_map.json` lưu hash từng file. `text import` chỉ áp file đã đổi; nếu cả JSON và file
 text đều đổi từ lần export thì báo conflict (dùng `--force` để lấy bản text). Mặc định
-chuẩn hóa CRLF → LF; giữ CRLF bằng `--keep-crlf`.
+chuẩn hóa CRLF → LF; giữ CRLF bằng `--keep-crlf`. File do người dùng tự đặt trong `text/`
+không nằm trong `_map.json` sẽ **không bị xóa** khi export lại; chúng được liệt kê ở
+`unmapped` trong mapping và trong kết quả `text import`.
 
 ### Lorebook
 
 ```bash
 python scripts/charx.py book list WORK
 python scripts/charx.py book add WORK --name "Tên" --keys "a, b" --content-file lore.md \
-  --mode normal --order 150 [--selective --secondkeys "c"] [--always-active] [--use-regex]
+  --mode normal --order 150 [--selective --secondkeys "c"] [--always-active] [--use-regex] \
+  [--folder "Tên folder" hoặc "Cha/Con"]
+python scripts/charx.py book folder add WORK --name "Folder mới" [--parent "Cha/Con"]
+python scripts/charx.py book move WORK 12 --folder "Cha/Con"   # --folder "" để đưa về gốc
 python scripts/charx.py book remove WORK 12 --yes
 python scripts/charx.py book sync WORK --direction module-to-card
 ```
 
-`book add/remove` tác động lên bản lorebook có hiệu lực (module khi có module). Khi pack,
-`auto` sẽ chép thay đổi sang bản còn lại.
+`book add/remove/move` tác động lên bản lorebook có hiệu lực (module khi có module). Khi
+pack, `auto` sẽ chép thay đổi sang bản còn lại. `book list` hiển thị thêm đường dẫn folder;
+`--json` trả về `folder` (id) và `folder_path` cho từng entry, cùng danh sách `folders`.
+`book folder add` sinh id `\uf000folder:<uuid>`; `--parent`/`--folder` nhận id, tên folder
+hoặc đường dẫn `Cha/Con`, và lệnh move từ chối tạo vòng lặp folder.
 
 ### Asset
 
@@ -182,12 +199,21 @@ python scripts/charx.py raw rm WORK extras/old.bin --yes
 
 Entry lạ được giữ nguyên tự động khi pack, không cần thao tác gì.
 
-### Module độc lập
+### Module độc lập và asset nhúng trong module
 
 ```bash
 python scripts/charx.py module decode module.risum --out module.json --assets-dir mod_assets
 python scripts/charx.py module encode module.json --out module.risum --assets-dir mod_assets
+
+python scripts/charx.py module assets list WORK
+python scripts/charx.py module assets replace WORK "#0" new.png [--name ten] [--ext png]
 ```
+
+Trong work directory, asset nhúng của module nằm ở
+`_charx/module_assets/<index>_<tên>.<ext>`. `module assets replace` nhận `#index`, số
+index, tên asset hoặc URI `module-asset://N`, ghi file mới và cập nhật `module.json` +
+manifest; `pack` sẽ đưa byte mới vào `module.risum`. Có thể thay byte trực tiếp trong
+`_charx/module_assets/` cũng được, nhưng dùng lệnh để tên/đuôi file khớp metadata.
 
 ## Những điểm phải nhớ
 
@@ -211,13 +237,17 @@ python scripts/charx.py module encode module.json --out module.risum --assets-di
 ## Kiểm thử
 
 ```bash
-python tests/selftest.py          # 12/12 kiểm thử, tự xóa thư mục tạm
+python tests/selftest.py          # 24/24 kiểm thử, tự xóa thư mục tạm
 python tests/selftest.py --keep   # giữ tests/.tmp để xem
 ```
 
 Bộ test dựng card tổng hợp (v3 + module + asset + entry lạ, thêm biến thể charxJpeg và v2)
-rồi kiểm tra: round-trip byte-identical, text conflict, sync lorebook, asset add/replace/
-remove/gc, raw entry, validate chặn gói hỏng, module decode/encode, và CLI.
+rồi kiểm tra: no-op pack sao chép nguồn byte-identical và tự tắt khi có sửa, text conflict,
+giữ file người dùng trong `text/`, chặn pack khi thiếu file local, entry ẩn/trùng tên được
+bảo toàn, diff work↔archive không báo thay đổi giả, JSON pointer escaping, giới hạn độ
+sâu/vòng lặp folder, thao tác folder lorebook, asset nhúng module list/replace, raw path
+safety, sync lorebook, asset add/replace/remove/gc, validate gói hỏng, module decode/encode,
+và CLI.
 
 ## Giấy phép
 

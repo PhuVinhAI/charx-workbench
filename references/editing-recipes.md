@@ -51,18 +51,32 @@ Xác định bản hiệu lực:
 python scripts/charx.py book list "work/card"
 ```
 
-Kết quả có `"source": "module"` hoặc `"card"`.
+Kết quả có `"source": "module"` hoặc `"card"`. `book list --json` cũng trả về `folder`
+(id) và `folder_path` cho từng entry, cùng danh sách `folders`.
 
 ### Thêm
 
 ```bash
 python scripts/charx.py book add "work/card" \
   --name "TÊN MỤC" --keys "từ khóa 1, từ khóa 2" --content-file lore.md \
-  --mode normal --order 150
+  --mode normal --order 150 --folder "Tên folder"   # hoặc "Cha/Con"
 # tùy chọn: --selective --secondkeys "khóa phụ" --always-active --use-regex --case-sensitive
 ```
 
 `book add` ghi vào bản hiệu lực. Khi pack, `--sync-book auto` (mặc định) chép sang bản kia.
+
+### Tạo folder và di chuyển mục
+
+```bash
+python scripts/charx.py book folder add "work/card" --name "Folder mới"
+python scripts/charx.py book folder add "work/card" --name "Con" --parent "Folder mới"
+python scripts/charx.py book move "work/card" 12 --folder "Folder mới/Con"
+python scripts/charx.py book move "work/card" 12 --folder ""     # đưa về gốc
+```
+
+`--parent`/`--folder` nhận id `\uf000folder:...`, tên folder (nếu duy nhất) hoặc đường dẫn
+hiển thị `Cha/Con`. `book folder add` tự sinh UUID; có thể truyền id cố định bằng `--id`.
+`book move` từ chối đưa folder vào chính nó hoặc folder con của nó.
 
 ### Sửa nội dung
 
@@ -244,8 +258,20 @@ gian>/`, không xóa vĩnh viễn. `gc` tìm file asset không còn được tha
 ### Asset trong module
 
 Các block asset của module nằm ở `work/card/_charx/module_assets/<index>_<tên>.<ext>`.
-Có thể thay file tại chỗ rồi `pack` (module.risum sẽ chứa bytes mới), hoặc dùng
-`module decode`/`module encode` độc lập. Không sửa `module.risum` bằng tay.
+Có thể thay file tại chỗ rồi `pack` (module.risum sẽ chứa bytes mới), hoặc dùng lệnh để
+đồng bộ cả metadata:
+
+```bash
+python scripts/charx.py module assets list "work/card"
+python scripts/charx.py module assets replace "work/card" "#0" new.png
+python scripts/charx.py module assets replace "work/card" "mod_asset" new.png \
+  --name ten_moi --ext png
+```
+
+Target nhận `#index`, số index, tên asset (so khớp cả tên trong `module.json` và tên file
+local) hoặc `module-asset://N`. Lệnh cập nhật file local, `module.json` (`assets[i]` =
+`[name, module-asset://i, ext]`) và `_charx/manifest.json`; `pack` mới đưa bytes vào
+`module.risum`. Không sửa `module.risum` bằng tay.
 
 ### Asset v2
 
@@ -269,7 +295,10 @@ python scripts/charx.py raw rm "work/card" extras/data.bin --yes
 
 `raw put` vào đường dẫn mới sẽ thêm entry; vào đường dẫn đã có sẽ thay bytes. Entry không
 nằm trong manifest vẫn được giữ khi pack. Không dùng `raw` cho `card.json`,
-`module.json`, `module.risum` (lệnh sẽ từ chối).
+`module.json`, `module.risum` (lệnh sẽ từ chối; `raw put` cũng từ chối các đường dẫn thuộc
+`_charx/` và `text/`). Entry gốc có tên trùng thư mục dành riêng của tool (`text/`,
+`_charx/`, file ẩn, `*.tmp`, `module.json`…) được cất dưới
+`_charx/original/entries/` nhưng vẫn được pack lại đúng tên gốc.
 
 ## 8. Chỉnh sửa module.risum khi không có module.json
 
@@ -309,8 +338,14 @@ python scripts/charx.py diff "C:/path/card.charx" "out/<tên card>.charx"
 ```
 
 - `validate` phải 0 error. Warning có sẵn từ nguồn thì ghi lại, không cần sửa.
-- `diff` phải chỉ ra đúng các pointer đã sửa. Với bản không sửa, `diff` phải rỗng và mọi
-  entry (trừ trường hợp archive gốc nén khác) giống hệt từng byte.
+- `diff` phải chỉ ra đúng các pointer đã sửa. Với bản không sửa, `pack` phát hiện work
+  chưa đổi (manifest, card, module, prefix và mọi file local đều khớp baseline) nên **sao
+  chép nguyên file nguồn** — hash SHA-256 của cả archive giống hệt và `diff` rỗng. Khi có
+  sửa, `pack` dựng lại archive: entry không sửa giống hệt từng byte, entry bị đổi được nén
+  lại (giữ `compress_type`/timestamp), nên chỉ so `diff` theo entry; hash cả file có thể
+  khác dù nội dung đúng.
+- File người dùng đặt trong `text/` mà không do `text export` tạo ra sẽ được giữ nguyên và
+  báo ở `unmapped`; đừng dựa vào export để dọn chúng.
 - Không ghi đè file nguồn; luôn xuất ra đường dẫn mới.
 - Báo cáo: file/pointer đã đổi, kết quả validate, cảnh báo tồn tại trước đó, phần chưa giải
   mã được (nếu có).
@@ -319,6 +354,7 @@ python scripts/charx.py diff "C:/path/card.charx" "out/<tên card>.charx"
 
 | Hiện tượng | Nguyên nhân / cách xử lý |
 | --- | --- |
+| `ENTRY_E_MISSING` / `pack` báo entry không có file local | File gốc đã bị xóa khỏi work. Khôi phục file (hoặc unpack lại vào thư mục mới) thay vì `--force` để tránh mất entry. |
 | `JSON pointer not found: C:/Program Files/Git/data/...` | Git Bash đổi `/data/...` thành đường dẫn. Dùng `MSYS_NO_PATHCONV=1` hoặc `//data/...`. |
 | `UnicodeEncodeError` khi in tiếng Hàn | Đặt `PYTHONIOENCODING=utf-8`. |
 | `pack` báo `ASSET_E_MISSING` | `data.assets` trỏ tới entry không có trong work. Khôi phục file hoặc sửa URI. |

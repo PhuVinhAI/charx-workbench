@@ -32,6 +32,7 @@ asset. Mỗi vấn đề là một object:
 | `ZIP_E_DUP` | error | Hai entry trùng tên trong ZIP | Dựng lại archive từ bản sạch; không sửa tay ZIP trùng tên |
 | `ZIP_E_UNSAFE` | error | Tên tuyệt đối, có ổ đĩa (`C:`), hoặc chứa `..` | `raw put` với đường dẫn tương đối an toàn; không bao giờ giải nén entry này ra ngoài work dir |
 | `ZIP_E_READ` | error | `--deep` không đọc được payload (CRC hỏng, entry bị cắt) | Thay entry bằng `raw put` từ file lành, hoặc lấy lại nguồn |
+| `ENTRY_E_MISSING` | error | Manifest ghi một entry nhưng file local của nó không còn trong work | Khôi phục file (unpack lại vào thư mục mới nếu cần); `pack` từ chối chạy trừ khi `--force`, và `--force` sẽ bỏ entry đó khỏi gói |
 | `LAYOUT_V2` | info | Chỉ có `chara`, không có `card.json` | Bình thường với card v2; PocketRisu vẫn import như v2 |
 | `PREFIX_JPEG` | info | Archive có prefix JPEG (`charxJpeg`) | `pack` giữ prefix mặc định; không cần làm gì |
 

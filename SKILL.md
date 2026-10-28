@@ -40,9 +40,13 @@ the user's request or this file.
 7. **Preserve unknown entries and unknown JSON fields.** They travel through `unpack`/
    `pack` untouched; use `raw get/put/rm` only for deliberate raw changes.
 8. **Validation gate.** `pack` refuses bundles with error-level issues unless `--force`.
-   Fix errors; report remaining warnings in the delivery note.
-9. **Prove the change.** Use `diff LEFT RIGHT` after packing. An untouched work copy must
-   repack byte-identically for every entry; an edit must show only the intended pointers.
+   Fix errors; report remaining warnings in the delivery note. A mapped entry whose local
+   file was deleted is `ENTRY_E_MISSING` and blocks packing; restore the file rather than
+   forcing the loss.
+9. **Prove the change.** Use `diff LEFT RIGHT` after packing. An untouched work copy is
+   copied from the source byte-for-byte (same whole-file SHA-256, empty `diff`); after an
+   edit, `diff` must show only the intended pointers and every untouched entry stays
+   byte-identical.
 
 ## Standard workflow
 
@@ -88,8 +92,10 @@ python scripts/charx.py diff "C:/path/card.charx" "out/card.charx"
 | `del WORK POINTER --yes` | Delete a JSON value |
 | `text export/import WORK` | Edit long strings as files with hash-conflict protection |
 | `book list/add/remove/sync` | Lorebook operations on the effective book |
+| `book folder add`, `book move` | Create nested folders; move entries/folders by id, name or `A/B` path |
 | `assets list/add/replace/remove/refs/gc` | Asset operations with `x_meta` upkeep |
 | `module decode/encode` | Standalone `module.risum` ⇄ `module.json` |
+| `module assets list/replace` | Inspect or replace blobs embedded in `module.risum` |
 | `raw get/put/rm` | Arbitrary non-JSON zip entries |
 
 The three target documents are addressed as:
@@ -109,11 +115,19 @@ The three target documents are addressed as:
   suffixes on collision inside the same directory; orphan folder references fall back to
   the root. Regex files use the sanitized `comment` as `<name>.in.txt`/`<name>.out.txt`.
   `text import` applies only files whose hash changed; it reports a conflict when the JSON
-  and the text both changed.
+  and the text both changed. Files you add under `text/` yourself are never deleted by a
+  re-export and are reported as `unmapped`.
 - Lorebook edits: use `book add`/`book remove`, or `set --target module /module/lorebook/...`.
   `pack --sync-book auto` rebuilds the card copy only when a side changed, using the same
   field mapping as PocketRisu. `--sync-book off` skips it; explicit
-  `module-to-card`/`card-to-module` forces a direction.
+  `module-to-card`/`card-to-module` forces a direction. Use `book folder add` and
+  `book move` for PocketRisu folders instead of hand-writing `\uf000folder:` ids; both
+  accept a folder id, a unique folder name, or an `A/B` display path, and `book move`
+  refuses to put a folder inside itself/its descendant.
+- Embedded module assets: `module assets list`/`replace` work on
+  `_charx/module_assets/<index>_<name>.<ext>` and update `module.json` plus the manifest;
+  `pack` re-embeds the new bytes. Accepts `#index`, `index`, asset name or
+  `module-asset://N`.
 - Regex `type` values: `editinput`, `editoutput`, `editprocess`, `editdisplay`,
   `editrequest`, `disabled`, or `""`. Trigger `type`: `start`, `manual`, `output`, `input`,
   `display`, `request`. Lore `mode`: `normal`, `constant`, `multiple`, `child`, `folder`.
@@ -137,7 +151,8 @@ The three target documents are addressed as:
 
 1. `validate` passes with zero errors (warnings explained).
 2. `pack` to a new path, never to the source.
-3. `diff` source vs output shows only the requested fields, or is empty for a no-op copy.
+3. `diff` source vs output shows only the requested fields; on a no-op it is empty and the
+   output file's SHA-256 equals the source.
 4. Unknown entries, metadata, non-image assets and the JPEG prefix are still present.
 5. Report: what changed (files/pointers), validation result, warnings that pre-existed, and
    anything that could not be decoded or tested at runtime.
