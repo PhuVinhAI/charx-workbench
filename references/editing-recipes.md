@@ -129,8 +129,8 @@ python scripts/charx.py set "work/card" /module/regex/0/out --file replacement.t
 python scripts/charx.py set "work/card" /module/regex/0/type --string "editdisplay" --target module
 ```
 
-Hoặc dùng `text export`: mỗi regex sinh hai file
-`module/regex/0000_<slug>.in.txt` và `.out.txt`.
+Hoặc dùng `text export`: mỗi regex sinh hai file `<COMMENT>.in.txt` và `<COMMENT>.out.txt`
+trong `module/regex/` (tên làm sạch từ `comment`; trùng tên thêm `_2`, `_3`…).
 
 Thêm regex mới — tạo file JSON chứa object rồi append:
 

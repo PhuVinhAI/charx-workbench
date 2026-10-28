@@ -2070,17 +2070,23 @@ def _text_targets(card, module, include_empty=False):
             if isinstance(value, str) and (include_empty or value != ""):
                 add("module/%s.%s" % (field, ext), "module", "/module/" + field, field)
         regex = module_obj.get("regex")
+        regex_files = set()
         if isinstance(regex, list):
             for index, entry in enumerate(regex):
                 if not isinstance(entry, dict):
                     continue
-                slug = slugify(entry.get("comment"), "regex_%d" % index)
-                for field in ("in", "out"):
-                    value = entry.get(field)
-                    if isinstance(value, str) and (include_empty or value != ""):
-                        add("module/regex/%04d_%s.%s.txt" % (index, slug, field), "module",
-                            "/module/regex/%d/%s" % (index, field),
-                            "regex %d: %s" % (index, entry.get("comment") or ""))
+                fields = [field for field in ("in", "out")
+                          if isinstance(entry.get(field), str)
+                          and (include_empty or entry.get(field) != "")]
+                if not fields:
+                    continue
+                comment = entry.get("comment")
+                base = unique_filename(
+                    clean_filename(comment, fallback="regex"), regex_files, "")
+                for field in fields:
+                    add("module/regex/%s.%s.txt" % (base, field), "module",
+                        "/module/regex/%d/%s" % (index, field),
+                        "regex %d: %s" % (index, comment or ""))
     return targets
 
 

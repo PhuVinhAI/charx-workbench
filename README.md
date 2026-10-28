@@ -132,8 +132,9 @@ python scripts/charx.py del WORK /data/tags --yes
 - regex `in`/`out`.
 
 File lorebook được đặt theo `comment` (module) hoặc `name` (card) đã làm sạch, không còn
-tiền tố index; nếu hai mục trùng tên, file sau thêm `_2`, `_3`… Tên không hợp lệ trên
-Windows (ký tự cấm, tên thiết bị như `CON`) cũng được làm sạch.
+tiền tố index; nếu hai mục trùng tên, file sau thêm `_2`, `_3`… File regex cũng đặt theo
+`comment`: `<tên>.in.txt` và `<tên>.out.txt`. Tên không hợp lệ trên Windows (ký tự cấm, tên
+thiết bị như `CON`) cũng được làm sạch.
 
 `text/_map.json` lưu hash từng file. `text import` chỉ áp file đã đổi; nếu cả JSON và file
 text đều đổi từ lần export thì báo conflict (dùng `--force` để lấy bản text). Mặc định

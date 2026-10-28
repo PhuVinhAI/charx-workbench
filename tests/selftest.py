@@ -250,6 +250,11 @@ def main():
                             if "/lorebook/" in item["file"])
         eq(lore_files, ["module/lorebook/Dragons.md", "module/lorebook/HUD.md"],
            "lorebook files use clean names")
+        regex_files = sorted(item["file"] for item in mapping["files"]
+                             if "/regex/" in item["file"])
+        eq(regex_files, ["module/regex/Noise_filter.in.txt",
+                         "module/regex/Noise_filter.out.txt"],
+           "regex files use clean names")
         used = set()
         eq([core.unique_filename("Same", used, ".md") for _ in range(2)],
            ["Same.md", "Same_2.md"], "duplicate lore names get a suffix")
