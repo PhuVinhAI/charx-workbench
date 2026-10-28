@@ -238,9 +238,10 @@ manifest; `pack` sẽ đưa byte mới vào `module.risum`. Có thể thay byte 
   card có sẵn đa ngôn ngữ. Mỗi card một quy ước riêng nên bước đầu luôn là khảo sát;
   xem `references/ui-localization.md`.
 - **Tách nhân vật khỏi card đa nhân vật**: làm tay theo bằng chứng (hồ sơ lore, greeting,
-  bảng dữ liệu trong trigger, họ tên asset). Giữ engine/HUD/selector, asset dùng chung,
-  block wrapper và prose; chỉ cắt đơn vị dành riêng cho nhân vật khác; kiểm cả "đủ" lẫn
-  "không thừa"; xem `references/character-split.md`.
+  bảng dữ liệu trong trigger, họ tên asset). Ngoài phần của nhân vật đích, phải **kéo theo
+  lớp bối cảnh chung** — thế giới/setting, luật viết, engine/HUD/selector, thuật ngữ,
+  timeline, quan hệ — và asset dùng chung; chỉ cắt đơn vị dành riêng cho nhân vật khác;
+  kiểm "đủ nhân vật", "đủ bối cảnh" và "không thừa"; xem `references/character-split.md`.
 - **Windows/Git Bash**: chuỗi bắt đầu bằng `/` bị đổi thành đường dẫn Windows. Thêm
   `MSYS_NO_PATHCONV=1` trước lệnh hoặc viết `//data/description`.
 - **Console cp1258**: đặt `PYTHONIOENCODING=utf-8` để in tiếng Hàn/Nhật không lỗi.

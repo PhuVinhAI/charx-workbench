@@ -10,11 +10,14 @@ cmd="...">`, trong regex OUT, hoặc trong cả năm chỗ cùng lúc. Không c�
 đọc hiểu được tất cả. Toolkit chỉ cung cấp lệnh nguyên thủy (`text export`, `book`,
 `assets`, `get`/`set`, `validate`, `diff`); phần phán đoán là của người làm.
 
-Mục tiêu kép, phải kiểm cả hai ở cuối:
+Ba điều phải đúng ở cuối, kiểm cả ba:
 
-- **Đủ**: mọi thứ nhân vật đó cần vẫn còn — hồ sơ, greeting, scene, ảnh, avatar, bảng dữ
-  liệu, engine HUD/selector, lệnh gõ.
-- **Không thừa**: không còn hồ sơ/ảnh/branch/bảng dữ liệu của nhân vật khác.
+- **Đủ về nhân vật**: hồ sơ, greeting, scene, ảnh, avatar, bảng dữ liệu của người đó.
+- **Đủ về bối cảnh**: thế giới/setting, địa điểm, tổ chức, luật viết và thể loại,
+  engine/format (HUD, selector, lệnh), thuật ngữ, timeline nền, và quan hệ của nhân vật đích
+  với những người xung quanh. Mọi thứ **định hình chung** phải đi theo, để card mới tự đứng
+  được mà không cần đọc card gốc.
+- **Không thừa**: không còn hồ sơ/ảnh/branch/scene/bảng dữ liệu dành riêng cho nhân vật khác.
 
 ## 0. Chuẩn bị và giữ mốc so sánh
 
@@ -65,12 +68,34 @@ Kết quả phải là một bảng, mỗi nhân vật một dòng:
 
 Kèm ba danh sách phụ, quyết định chất lượng của cả lần tách:
 
-- **Mục dùng chung / hệ thống**: entry engine, format HUD, luật viết, world setting, rule
-  `@@depth`, regex render, CSS. Không thuộc ai → **giữ**.
+- **Lớp bối cảnh chung** (bảng bên dưới): mọi thứ định hình thế giới mà nhân vật đích sống
+  trong đó → **kéo theo**.
 - **Mục mập mờ**: entry nhắc tới ≥2 nhân vật (roster, quan hệ, timeline chung). Đọc kỹ rồi
-  xếp vào "giữ" hoặc "cắt bớt", không đoán.
+  xếp vào "giữ nguyên", "cắt bớt" hoặc "rút thành một dòng bối cảnh", không đoán.
 - **Họ asset không có chủ**: nhóm asset cùng tiền tố mà không khớp tên nhân vật nào. Ghi
   vào báo cáo, **giữ nguyên** (thiếu ảnh tệ hơn thừa ảnh).
+
+### Lớp bối cảnh chung phải kéo theo
+
+Tách nhân vật **không** phải là chỉ giữ prompt của riêng người đó. Card mới phải tự đứng
+được: người đọc phải biết ngay chuyện xảy ra ở đâu, khi nào, luật chơi là gì, ai đang nói,
+và những cái tên được nhắc tới là ai. Lập bảng này **trước khi xóa bất cứ thứ gì**.
+
+| Lớp | Nội dung thường gặp | Xử lý |
+| --- | --- | --- |
+| Thế giới / bối cảnh | setting, thời đại, địa điểm, tổ chức, phe phái, nghề nghiệp chung | Giữ nguyên |
+| Luật viết và thể loại | ngôi kể, độ dài, nhịp cảnh, mức nội dung, quy tắc `@@depth`/`@@role` | Giữ nguyên |
+| Engine / format | HUD, selector, side panel, log, marker, field key, CSS, regex render | Giữ nguyên |
+| Thuật ngữ | glossary, tên kỹ năng/chức danh, đơn vị, danh xưng, kính ngữ | Giữ nguyên |
+| Timeline / sự kiện nền | lịch sử thế giới, sự kiện đã xảy ra, mốc thời gian chung | Giữ; chỉ cắt chi tiết riêng của nhân vật khác |
+| Quan hệ của nhân vật đích | "X là chị gái của đích", "đích và Y cùng lab" | **Giữ cả tên người khác** — đó là bối cảnh của đích |
+| Lệnh / cơ chế dùng chung | lệnh gõ, trigger chung, bảng dữ liệu engine | Giữ; chỉ cắt phần tử của nhân vật khác |
+| Hồ sơ đầy đủ của nhân vật khác | tiểu sử, ngoại hình, tính cách, scene riêng, greeting riêng, ảnh riêng | Xóa |
+
+Khi một entry **vừa** là bối cảnh **vừa** chứa hồ sơ nhân vật khác (roster, bảng quan hệ,
+danh sách thành viên, mô tả một nhóm), đừng xóa cả entry: rút phần của người khác thành
+**một dòng định danh** đủ để câu chuyện còn nghĩa (tên + vai trò + quan hệ với nhân vật
+đích), bỏ tiểu sử, ngoại hình, tính cách, scene và ảnh của họ.
 
 Cẩn thận với tên trùng từ thường: alias phải là **tên người**. Kiểm tra trước khi dùng một
 từ làm khóa sở hữu: nó có xuất hiện trong hồ sơ nhân vật, trong bảng avatar, hoặc làm tiền
@@ -95,10 +120,15 @@ Với từng entry, trả lời hai câu: *nó thuộc về ai?* và *bỏ nó t
 | --- | --- |
 | Hồ sơ/tiểu sử/scenario riêng của nhân vật khác | Xóa (`book remove`) |
 | Hồ sơ của nhân vật đích | Giữ; sửa nếu nó đang viết theo kiểu "một trong số N người" |
-| Engine: format HUD, luật viết, world, quy tắc `@@depth`/`@@role`, Always-On hệ thống | Giữ nguyên |
-| Roster/danh sách cast, quan hệ giữa các nhân vật | Cắt phần nhân vật khác, giữ cấu trúc và phần của nhân vật đích |
+| Engine: format HUD, luật viết, quy tắc `@@depth`/`@@role`, Always-On hệ thống | Giữ nguyên |
+| Thế giới/bối cảnh: setting, địa điểm, tổ chức, thuật ngữ, timeline nền | **Giữ nguyên** — đây là thứ làm card mới còn hiểu được (mục 1) |
+| Roster/danh sách cast, quan hệ giữa các nhân vật | Không xóa cả entry: giữ nhân vật đích, rút người khác thành một dòng định danh |
 | Entry theo scene chỉ dùng cho scene của nhân vật khác | Xóa (xem mục 4 về scene id) |
 | Folder | Xóa folder khi không còn entry con; dùng `book list --json` để xem `folder_path` |
+
+Sau khi xóa, đọc lại card như người mới: còn trả lời được *ở đâu / khi nào / luật gì / ai
+đang nói / người được nhắc tới là ai* không? Nếu một entry bối cảnh bị mất, khôi phục từ
+`work/base`.
 
 ```bash
 python scripts/charx.py book list "work/split" --json
@@ -139,10 +169,16 @@ Khi tách:
 
 1. Đọc và tách đôi nội dung: phần *engine/format/luật* và phần *danh sách nhân vật*.
 2. Phần engine **không được mất**. Nếu không còn chỗ cho nó trong description mới, chuyển
-   nó thành một lore entry Always-On (ví dụ `ENGINE (from card description)`).
+   nó thành một lore entry Always-On (ví dụ `ENGINE (from card description)`). Kèm theo đó
+   là phần **bối cảnh chung** từng nằm trong description: thế giới, địa điểm, tổ chức, thời
+   gian, luật chơi — giữ lại, đừng để mất theo danh sách cast.
 3. Phần description mới: hồ sơ của nhân vật đích (lấy từ lore entry hồ sơ của người đó,
-   hoặc viết lại từ các phần của entry đó).
-4. Xóa trong description mọi đoạn mô tả nhân vật khác, mọi "chọn ai để bắt đầu".
+   hoặc viết lại từ các phần của entry đó) **cộng với bối cảnh** đủ để một người chưa đọc
+   card gốc hiểu được hoàn cảnh: ở đâu, khi nào, quan hệ của đích với những người được nhắc
+   tới, đích đang ở tình huống nào.
+4. Xóa trong description mọi đoạn hồ sơ riêng của nhân vật khác và mọi "chọn ai để bắt
+   đầu". Người khác chỉ còn lại dưới dạng một dòng định danh khi họ có ý nghĩa với bối cảnh
+   của nhân vật đích.
 
 ```bash
 python scripts/charx.py set "work/split" /data/description --file description.md
@@ -163,10 +199,12 @@ Thứ tự kiểm tra cho mỗi đơn vị:
 2. **Gate theo trạng thái** (`getvar` không phải tên người, không phải scene id) → **giữ**.
 3. **Gate theo scene id của nhân vật khác** → cắt (dùng bảng scene ở mục 4).
 4. **Gate theo tên nhân vật khác** (`{{equal::{{getvar::next}}::Tên}}`) → cắt.
-5. **Nhắc tới tên nhân vật khác trong prose/lời thoại/ghi chú quan hệ của nhân vật đích**
-   → **giữ**. Đó là nội dung, không phải cast list.
+5. **Nhắc tới tên nhân vật khác trong prose/lời thoại/ghi chú quan hệ/bối cảnh thế giới của
+   nhân vật đích** → **giữ**. Đó là nội dung và bối cảnh, không phải cast list.
 6. **Dòng/mục liệt kê cast** (một dòng một người, một thẻ một người, một nút một người) →
-   giữ dòng của nhân vật đích, cắt các dòng còn lại.
+   giữ dòng của nhân vật đích. Với người khác: cắt hẳn nếu dòng đó chỉ để chọn/hiển thị họ;
+   rút thành **một dòng định danh** nếu nó mang thông tin bối cảnh mà nhân vật đích cần
+   (quan hệ, vai trò trong tổ chức, sự kiện chung).
 
 Kỹ thuật theo loại văn bản:
 
@@ -236,7 +274,7 @@ python scripts/charx.py assets gc "work/split" --move --yes
 7. Nếu card có nhiều greeting/scene và mỗi scene dùng một ảnh, kiểm tra lại ánh xạ
    `cmd="..."` → asset sau khi cắt scene.
 
-## 7. Kiểm chứng: đủ và không thừa
+## 7. Kiểm chứng: đủ (nhân vật + bối cảnh) và không thừa
 
 **Đủ** — mọi tham chiếu trong văn bản còn lại phải trỏ tới thứ còn tồn tại:
 
@@ -251,6 +289,18 @@ python scripts/charx.py validate "work/split"
 Mỗi tên trong danh sách phải khớp một asset/trigger/biến còn lại. `validate` phải không có
 `ASSET_E_MISSING`, `ENTRY_E_MISSING`, `MOD_E_*`.
 
+**Đủ về bối cảnh** — phần dễ thiếu nhất, vì không có lệnh nào báo lỗi cho nó. Mở
+`description` + `first_mes` + các lore đã giữ và trả lời như một người chưa từng đọc card
+gốc:
+
+| Câu hỏi | Nếu không trả lời được |
+| --- | --- |
+| Chuyện xảy ra ở đâu, thời điểm nào, thế giới loại gì? | Thiếu entry thế giới/bối cảnh — lấy lại từ `work/base` |
+| Luật viết/thể loại/mức nội dung là gì? | Thiếu entry luật viết hoặc `@@depth`/`@@role` |
+| Nhân vật đích là ai, đang ở tình huống nào, quan hệ gì với `{{user}}`? | Hồ sơ đích chưa đủ hoặc greeting bị cắt mất phần mở |
+| Mỗi cái tên còn xuất hiện là ai? | Thiếu dòng định danh — thêm một dòng, không thêm cả hồ sơ |
+| HUD/lệnh/cơ chế của card dùng thế nào? | Thiếu engine/format — kiểm tra entry Always-On đã chuyển |
+
 **Không thừa** — quét tên nhân vật khác trên toàn bộ văn bản:
 
 ```bash
@@ -263,10 +313,11 @@ python scripts/charx.py assets gc "work/split"
 Với mỗi chỗ còn nhắc tên nhân vật khác, phải giải thích được và ghi vào báo cáo:
 
 - prose/lời thoại/quan hệ của nhân vật đích → **giữ**, đúng;
+- một dòng định danh bối cảnh (tên + vai trò + quan hệ với đích) → **giữ**, đúng;
 - comment trong code, credit tác giả → giữ;
 - alias gốc trong bảng ánh xạ (đã thêm alias Latin) → giữ;
 - một mục trong danh sách cast, một branch, một nút, một hàng HTML, một phần tử bảng Lua,
-  một họ asset → **phải cắt**, đây là sót.
+  một họ asset, hoặc cả một hồ sơ/tiểu sử/scene của người khác → **phải cắt**, đây là sót.
 
 **Kiểm tra logic còn chạy.** Mô phỏng regex bằng mẫu thật (Node dùng cùng cú pháp `$1`):
 
@@ -309,8 +360,11 @@ Báo cáo giao:
 
 - nhân vật được chọn, alias đã dùng để grep;
 - bảng cast đã dựng và bằng chứng của từng người;
-- lore: xóa bao nhiêu, giữ bao nhiêu, cắt bao nhiêu, folder nào bị xóa;
-- greeting/description: greeting nào được chọn, phần engine cũ được chuyển đi đâu;
+- **lớp bối cảnh chung đã kéo theo**: thế giới/setting, luật viết, engine/format, thuật ngữ,
+  timeline, quan hệ của nhân vật đích (kèm pointer của từng entry);
+- lore: xóa bao nhiêu, giữ bao nhiêu, cắt bao nhiêu, entry nào được rút thành một dòng định
+  danh, folder nào bị xóa;
+- greeting/description: greeting nào được chọn, phần engine và bối cảnh cũ được chuyển đi đâu;
 - scene id nào bị bỏ, scene id nào giữ;
 - regex/trigger: cái nào giữ nguyên, cái nào cắt, cái nào xóa;
 - asset: giữ/xóa bao nhiêu, giải phóng bao nhiêu dung lượng, họ asset nào không xác định
@@ -331,7 +385,9 @@ Báo cáo giao:
 | Regex không match | Đã đổi marker/field key/nhóm capture khi cắt. Chỉ cắt nội dung, không đổi cú pháp. |
 | Vẫn còn tên nhân vật khác trong UI | Quên cắt hàng HTML / nhánh CBS / phần tử bảng dữ liệu; grep lại từng alias. |
 | Mất engine sau khi thay description | Không chuyển phần format/luật cũ sang lore Always-On. |
-| Xóa nhầm entry mập mờ | Entry roster/quan hệ/timeline là **dùng chung**: cắt bớt, đừng xóa cả entry. |
+| Card mới đọc không hiểu bối cảnh | Chỉ giữ prompt riêng của nhân vật, quên lớp thế giới/setting/thuật ngữ/timeline. Đối chiếu bảng "lớp bối cảnh chung" ở mục 1 và khôi phục từ `work/base`. |
+| Tên người khác xuất hiện mà không ai biết họ là ai | Đã xóa hồ sơ của họ nhưng prose của nhân vật đích vẫn nhắc. Thêm một dòng định danh (tên + vai trò + quan hệ), không thêm cả hồ sơ. |
+| Xóa nhầm entry mập mờ | Entry roster/quan hệ/timeline là **dùng chung**: cắt bớt hoặc rút thành một dòng, đừng xóa cả entry. |
 | Không mở được trong PocketRisu | Kiểm tra lại `validate`, `data.name`, và `pack` có giữ prefix JPEG hay không. |
 
 ## 10. Ví dụ đã làm (để hình dung quy mô)
@@ -341,15 +397,19 @@ Card MUSE Lab (`CharX File (7).charx`, 149 MB, 13 nhân vật, module lorebook t
 - Bảng cast dựng từ hồ sơ lore (`PROFILE`), khóa entry, bảng `PARTNERS`/`AVATARS`/
   `BIRTHDAYS` trong Lua trigger, họ asset `sp_*` và `<First>_*`.
 - Tách nhân vật `박로아`: scene id 2 và 3 thuộc nhân vật khác → bỏ; scene 1, 4, 5, 6 giữ.
-- Lore: xóa 12 entry hồ sơ nhân vật khác, giữ 26 entry engine/dùng chung, cắt 12 entry
-  roster.
+- Lore: xóa 12 entry hồ sơ nhân vật khác, giữ 26 entry, cắt 12 entry roster.
+- 26 entry được giữ chính là **lớp bối cảnh chung**: engine/format HUD, luật viết, setting
+  lab và các địa điểm, thuật ngữ dự án, timeline nền, cùng các entry quan hệ mà 박로아 là
+  một đầu mối. 12 entry roster chỉ bị cắt phần hồ sơ của người khác, giữ lại vai trò và quan
+  hệ của họ với 박로아.
 - `first_mes`: 18590 → 4277 ký tự sau khi bỏ block scene 2/3 và hàng cast của người khác;
   block wrapper `{{#when {{not::{{equal::{{getvar::ml_started}}::1}}}}}}` (9577 ký tự, 81%
   văn bản selector) phải **giữ** — lần chạy đầu cắt nhầm và selector chỉ còn 1592 ký tự.
 - `description` cast-overview (2365 ký tự) → hồ sơ của 박로아 (6373 ký tự); phần engine cũ
   chuyển thành lore Always-On `STORY ENGINE (from card description)`.
-- Asset: giữ 253, xóa 2068, giải phóng 122 MB. Họ asset không xác định được chủ: giữ và
-  ghi báo cáo.
+- Asset: giữ 253, xóa 2068, giải phóng 122 MB — trong 253 asset giữ lại có ảnh dùng chung
+  của engine (icon, nền, sprite HUD) chứ không chỉ ảnh của 박로아. Họ asset không xác định
+  được chủ: giữ và ghi báo cáo.
 - Regex: `/미팅` và `/시연회` (lệnh dùng chung) giữ nguyên chức năng, chỉ cắt phần cast;
   selector và side panel cắt hàng nhân vật khác.
 - Lua: cắt phần tử trong `PARTNERS`/`AVATARS`/`BIRTHDAYS`, giữ toàn bộ hàm `roll`/`set`/
@@ -357,5 +417,6 @@ Card MUSE Lab (`CharX File (7).charx`, 149 MB, 13 nhân vật, module lorebook t
 - Còn 152 pointer nhắc tên nhân vật khác, phần lớn là prose/quan hệ trong hồ sơ của nhân
   vật đích → giữ, có ghi chú.
 
-Con số chỉ để tham khảo tỷ lệ: asset thường là phần nặng nhất, engine/HUD/selector là phần
-phải giữ cẩn thận nhất.
+Con số chỉ để tham khảo tỷ lệ: asset là phần nặng nhất, engine/HUD/selector là phần phải giữ
+cẩn thận nhất, còn **lớp bối cảnh chung là phần dễ bỏ sót nhất** — nó không nằm trong hồ sơ
+của nhân vật nên rất dễ bị xếp nhầm vào "của người khác".

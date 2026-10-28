@@ -404,21 +404,30 @@ nguyên thủy. Trình tự rút gọn:
 2. Dựng **bảng cast** từ bằng chứng: `book list --json` (hồ sơ, khóa, folder), greeting,
    regex OUT (selector/panel/log in tên), trigger/CJS (`PARTNERS`/`AVATARS`/`BIRTHDAYS`…),
    `assets list` (họ tên asset). Mỗi nhân vật: tên + mọi alias + pointer bằng chứng + họ asset.
-3. Phân loại từng entry lore: của đích / của người khác (xóa) / dùng chung (giữ) / mập mờ
-   (đọc rồi cắt bớt). Xóa từ cuối lên đầu vì index dịch lại; xóa folder rỗng.
+3. Phân loại từng entry lore: của đích / của người khác (xóa) / **định hình chung (giữ)** /
+   mập mờ (đọc rồi cắt bớt). Lớp định hình chung gồm thế giới/setting, địa điểm, tổ chức,
+   luật viết và thể loại, engine/format, thuật ngữ, timeline nền, quan hệ của nhân vật đích
+   — phải kéo theo để card mới tự đứng được. Entry vừa là bối cảnh vừa chứa hồ sơ người khác
+   thì rút thành một dòng định danh, đừng xóa cả entry. Xóa từ cuối lên đầu vì index dịch
+   lại; xóa folder rỗng.
 4. Greeting: chọn greeting của nhân vật đích làm `first_mes`; lập bảng **scene id → nhân
    vật** rồi bỏ block gate theo scene của người khác, giữ gate theo trạng thái card.
-5. `description`: tách phần *engine/format* ra khỏi phần *danh sách cast*. Phần engine không
-   được mất — chuyển thành lore Always-On. Description mới là hồ sơ của nhân vật đích.
+5. `description`: tách phần *engine/format/bối cảnh* ra khỏi phần *danh sách cast*. Phần
+   engine không được mất — chuyển thành lore Always-On. Description mới là hồ sơ của nhân
+   vật đích **cộng bối cảnh** (ở đâu, khi nào, luật gì, quan hệ với `{{user}}` và với những
+   người được nhắc tới).
 6. Cắt trong văn bản theo đúng thứ tự kiểm tra: wrapper (≥ ~90% văn bản) → giữ; gate trạng
    thái → giữ; gate scene/người khác → cắt; tên người khác trong prose → giữ; mục liệt kê
    cast → chỉ giữ dòng của đích. HTML cắt theo phần tử lặp; Lua/CJS chỉ cắt phần tử trong
    bảng dữ liệu, giữ hàm và kiểm tra `#TABLE` ≥ 1.
 7. Asset: đối chiếu họ tên với alias. Xóa bằng `assets remove` (có backup trong
    `_charx/removed/`), giữ asset dùng chung và asset không xác định được chủ; `assets gc`.
-8. Kiểm chứng hai phía — **đủ**: `grep` `{{raw::`, `embeded://`, `getvar::av_`,
+8. Kiểm chứng ba phía — **đủ (nhân vật)**: `grep` `{{raw::`, `embeded://`, `getvar::av_`,
    `risu-trigger=` rồi đối chiếu với thứ còn tồn tại, `validate` sạch `*_E_MISSING`;
-   **không thừa**: grep từng alias nhân vật khác, mọi chỗ còn lại phải giải thích được.
+   **đủ (bối cảnh)**: đọc `description` + `first_mes` + lore đã giữ như một người chưa đọc
+   card gốc — còn trả lời được *ở đâu / khi nào / luật gì / ai đang nói / mỗi cái tên còn
+   lại là ai* không; **không thừa**: grep từng alias nhân vật khác, mọi chỗ còn lại phải
+   giải thích được.
 9. `validate` → `pack --out out/` → `diff`. Diff sẽ rất lớn; kiểm tra không có entry lạ bị
    xóa, prefix JPEG và `x_meta` còn nguyên. Báo cáo số liệu từng lớp + phần chưa test runtime.
 
