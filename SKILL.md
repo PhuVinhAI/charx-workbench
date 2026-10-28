@@ -102,8 +102,10 @@ The three target documents are addressed as:
 
 - Prefer `text export` for prose longer than a few hundred characters. It exports card
   fields, effective lorebook content, module name/description/cjs/backgroundEmbedding/
-  customModuleToggle, regex `in`/`out`, and risuai HTML. `text import` applies only files
-  whose hash changed; it reports a conflict when the JSON and the text both changed.
+  customModuleToggle, regex `in`/`out`, and risuai HTML. Lorebook files are named from the
+  sanitized entry title (`comment`/`name`, then first key), with `_2` suffixes on collision.
+  `text import` applies only files whose hash changed; it reports a conflict when the JSON
+  and the text both changed.
 - Lorebook edits: use `book add`/`book remove`, or `set --target module /module/lorebook/...`.
   `pack --sync-book auto` rebuilds the card copy only when a side changed, using the same
   field mapping as PocketRisu. `--sync-book off` skips it; explicit

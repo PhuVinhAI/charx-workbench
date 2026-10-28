@@ -246,6 +246,14 @@ def main():
     def t_text_edit():
         mapping = core.text_export(work)
         eq(len(mapping["files"]) > 5, True, "text targets exported")
+        lore_files = sorted(item["file"] for item in mapping["files"]
+                            if "/lorebook/" in item["file"])
+        eq(lore_files, ["module/lorebook/Dragons.md", "module/lorebook/HUD.md"],
+           "lorebook files use clean names")
+        used = set()
+        eq([core.unique_filename("Same", used, ".md") for _ in range(2)],
+           ["Same.md", "Same_2.md"], "duplicate lore names get a suffix")
+        eq(core.clean_filename("CON"), "_CON", "reserved device name is sanitized")
         path = os.path.join(work, "text", "card", "description.md")
         text = open(path, "r", encoding="utf-8").read()
         with open(path, "w", encoding="utf-8", newline="\n") as handle:

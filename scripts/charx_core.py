@@ -170,6 +170,28 @@ def slugify(text, fallback="item", max_len=48):
     return text or fallback
 
 
+WINDOWS_RESERVED_NAMES = ({"CON", "PRN", "AUX", "NUL"}
+                          | set("COM%d" % i for i in range(1, 10))
+                          | set("LPT%d" % i for i in range(1, 10)))
+
+
+def clean_filename(text, fallback="lore", max_len=48):
+    base = slugify(text, fallback=fallback, max_len=max_len)
+    if base.split(".")[0].upper() in WINDOWS_RESERVED_NAMES:
+        base = "_" + base
+    return base
+
+
+def unique_filename(base, used, ext):
+    candidate = base + ext
+    index = 2
+    while candidate.lower() in used:
+        candidate = "%s_%d%s" % (base, index, ext)
+        index += 1
+    used.add(candidate.lower())
+    return candidate
+
+
 def format_size(num):
     if num < 1024:
         return "%d B" % num
@@ -1941,6 +1963,19 @@ def delete_pointer(doc, pointer):
 # text export / import
 # --------------------------------------------------------------------------
 
+def _lore_label(entry, name_field):
+    value = entry.get(name_field)
+    if isinstance(value, str) and value.strip():
+        return value
+    keys = entry.get("keys")
+    if not isinstance(keys, list):
+        keys = str(entry.get("key") or "").split(",")
+    for key in keys:
+        if isinstance(key, str) and key.strip():
+            return key.strip()
+    return "lore"
+
+
 def _text_targets(card, module, include_empty=False):
     targets = []
 
@@ -1972,24 +2007,29 @@ def _text_targets(card, module, include_empty=False):
             "/data/extensions/depth_prompt/prompt", "depth prompt")
 
     source, lore = effective_lore(card, module)
+    lore_files = set()
     if source == "module":
         for index, entry in enumerate(lore):
             if not isinstance(entry, dict):
                 continue
             content = entry.get("content")
             if isinstance(content, str) and (include_empty or content != ""):
-                filename = "module/lorebook/%04d_%s.md" % (index, slugify(entry.get("comment"), "lore"))
+                name = _lore_label(entry, "comment")
+                filename = "module/lorebook/" + unique_filename(
+                    clean_filename(name), lore_files, ".md")
                 add(filename, "module", "/module/lorebook/%d/content" % index,
-                    "lore: %s" % (entry.get("comment") or index))
+                    "lore: %s" % name)
     elif source == "card":
         for index, entry in enumerate(lore):
             if not isinstance(entry, dict):
                 continue
             content = entry.get("content")
             if isinstance(content, str) and (include_empty or content != ""):
-                filename = "card/character_book/%04d_%s.md" % (index, slugify(entry.get("name"), "lore"))
+                name = _lore_label(entry, "name")
+                filename = "card/character_book/" + unique_filename(
+                    clean_filename(name), lore_files, ".md")
                 add(filename, "card", "/data/character_book/entries/%d/content" % index,
-                    "lore: %s" % (entry.get("name") or index))
+                    "lore: %s" % name)
 
     if isinstance(module, dict):
         module_obj = unwrap_module(module)
