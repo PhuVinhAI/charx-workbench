@@ -367,25 +367,59 @@ python scripts/charx.py diff "C:/path/card.charx" "out/<tên card>.charx"
 ## 12. Việt hóa toàn bộ UI của card
 
 Với yêu cầu "mọi thứ card hiển thị dạng UI sang tiếng Việt", chỉ sửa lớp hiển thị; không dịch
-lore/prose. Kiểm kê đủ bề mặt trước khi sửa:
+lore/prose. Mỗi card tự đặt marker/tên biến/tên lệnh, nên **không** áp quy ước của card khác:
 
-1. `text export`; quét Hangul trong `module/regex`, `card/extensions`; đọc trigger để tìm
-   `print`, biến `ml_*`/`*_ws`/`*_tab`, bảng `AVATARS`, trạng thái dự án.
-2. Selector/màn hình bắt đầu: dịch kicker, phòng ban, scene card, caption, nút, chữ cái đầu
+1. `text export`; quét ngôn ngữ nguồn theo dải Unicode (Hangul `\x{AC00}-\x{D7A3}`, kana
+   `\x{3040}-\x{30FF}`, Hán tự `\x{4E00}-\x{9FFF}`); lập bảng bề mặt kèm pointer thật:
+   prompt sinh dữ liệu, selector, HUD, side panel, log, thông báo trigger, lệnh gõ, CSS.
+2. Ghi lại quy ước của card: marker block, tên field, biến chat, lệnh, mã trạng thái. Đây là
+   những thứ **không được đổi**.
+3. Phân loại từng chuỗi: nhãn hiển thị → dịch; giá trị trong block ví dụ → dịch; khóa kỹ
+   thuật → giữ; khóa tên người / token lệnh → giữ và thêm alias.
+4. Selector/màn hình bắt đầu: dịch kicker, tên nhóm, scene card, caption, nút, chữ cái đầu
    avatar trong `<selector>.out.txt`; giữ `$1...`, `{{...}}`, class, `risu-trigger`.
-3. Side panel + nhật ký lệnh: dịch nhãn tĩnh trong regex OUT; thêm bảng `DISPLAY_NAMES` và
-   gọi `displayName()` ở mọi chỗ đưa tên vào UI; dịch `ml_ws`/`ml_tab`/`ml_bot`, trạng thái.
-4. HUD: thêm một câu `Write every HUD value in Vietnamese...`; dịch block ví dụ; giữ marker
-   (`◈YR`, `◈ML`), field key (`TIME|`, `STAMP|`), mã (`C/H/N`, `on/away/dnd`) và thứ tự ngày
-   mà script parse (`MM.DD`). Dịch nhãn tĩnh trong HUD OUT và `content:"..."` của CSS.
-5. Tên → avatar: thêm alias Latin vào bảng `AVATARS`/`av_` (giữ khóa gốc); regex capture tên
-   thường không cần đổi. Alias phải khớp đúng chuỗi UI in ra (PocketRisu không trim `getvar`).
-6. Lệnh: mở rộng regex IN `/(?:미팅|hop)...`, `/(?:시연회|demo)...`; giữ token cũ; cập nhật
-   note nhắc lệnh và regex xóa note cho cả `── 위` và `── Nhập`.
-7. Card có đa ngôn ngữ sẵn: thêm lựa chọn/bảng chuỗi `vi`, không ghi đè ngôn ngữ gốc.
-8. `text import` (Lua thì `set ... --file`, giữ LF), `validate`, `pack` ra file mới. `diff`
-   phải chỉ thấy các pointer UI + bản card book đồng bộ, `entries` 0 thay đổi.
-9. Mô phỏng từng regex bằng mẫu tiếng Việt: marker bị thay, `$n` không sót, nhãn đúng,
-   `<div>` cân bằng, `av_<Tên>`/asset `sp_*` tồn tại; thử cả lệnh cũ và mới.
+5. Side panel + log: dịch nhãn tĩnh trong regex OUT; nếu script đưa khóa tên vào UI thì thêm
+   bảng `DISPLAY_NAMES` + hàm `displayName()`; dịch nhãn workspace/tab/trạng thái.
+6. HUD: thêm một câu `Write every HUD value in Vietnamese...`; dịch block ví dụ; giữ marker,
+   field key, mã trạng thái và thứ tự ngày mà script parse. Dịch nhãn tĩnh trong HUD OUT và
+   `content:"..."` của CSS.
+7. Tên → avatar: thêm alias Latin vào bảng ánh xạ (giữ khóa gốc); regex capture tên thường
+   không cần đổi. Alias phải khớp đúng chuỗi UI in ra (PocketRisu không trim `getvar`).
+8. Lệnh: mở rộng regex IN dạng `/(?:token_gốc|alias_vi)...`; giữ token cũ; cập nhật note nhắc
+   lệnh và regex xóa note cho cả hai dạng.
+9. Card có đa ngôn ngữ sẵn: thêm lựa chọn/bảng chuỗi `vi`, không ghi đè ngôn ngữ gốc.
+10. `text import` (Lua thì `set ... --file`, giữ LF), `validate`, `pack` ra file mới. `diff`
+    phải chỉ thấy các pointer UI + bản card book đồng bộ, `entries` 0 thay đổi.
+11. Mô phỏng từng regex bằng mẫu của chính card đó: marker bị thay, `$n` không sót, nhãn
+    đúng, `<div>` cân bằng, khóa avatar/asset tồn tại; thử cả lệnh cũ và mới.
 
 Chi tiết đầy đủ, mẫu lệnh và lỗi thường gặp: [ui-localization.md](ui-localization.md).
+
+## 13. Tách một nhân vật từ card đa nhân vật
+
+Card đa nhân vật có vô tận cách viết nên việc tách **làm tay**; toolkit chỉ cung cấp lệnh
+nguyên thủy. Trình tự rút gọn:
+
+1. `unpack` hai bản: `work/base` (mốc, không sửa) và `work/split` (bản sửa). `text export`.
+2. Dựng **bảng cast** từ bằng chứng: `book list --json` (hồ sơ, khóa, folder), greeting,
+   regex OUT (selector/panel/log in tên), trigger/CJS (`PARTNERS`/`AVATARS`/`BIRTHDAYS`…),
+   `assets list` (họ tên asset). Mỗi nhân vật: tên + mọi alias + pointer bằng chứng + họ asset.
+3. Phân loại từng entry lore: của đích / của người khác (xóa) / dùng chung (giữ) / mập mờ
+   (đọc rồi cắt bớt). Xóa từ cuối lên đầu vì index dịch lại; xóa folder rỗng.
+4. Greeting: chọn greeting của nhân vật đích làm `first_mes`; lập bảng **scene id → nhân
+   vật** rồi bỏ block gate theo scene của người khác, giữ gate theo trạng thái card.
+5. `description`: tách phần *engine/format* ra khỏi phần *danh sách cast*. Phần engine không
+   được mất — chuyển thành lore Always-On. Description mới là hồ sơ của nhân vật đích.
+6. Cắt trong văn bản theo đúng thứ tự kiểm tra: wrapper (≥ ~90% văn bản) → giữ; gate trạng
+   thái → giữ; gate scene/người khác → cắt; tên người khác trong prose → giữ; mục liệt kê
+   cast → chỉ giữ dòng của đích. HTML cắt theo phần tử lặp; Lua/CJS chỉ cắt phần tử trong
+   bảng dữ liệu, giữ hàm và kiểm tra `#TABLE` ≥ 1.
+7. Asset: đối chiếu họ tên với alias. Xóa bằng `assets remove` (có backup trong
+   `_charx/removed/`), giữ asset dùng chung và asset không xác định được chủ; `assets gc`.
+8. Kiểm chứng hai phía — **đủ**: `grep` `{{raw::`, `embeded://`, `getvar::av_`,
+   `risu-trigger=` rồi đối chiếu với thứ còn tồn tại, `validate` sạch `*_E_MISSING`;
+   **không thừa**: grep từng alias nhân vật khác, mọi chỗ còn lại phải giải thích được.
+9. `validate` → `pack --out out/` → `diff`. Diff sẽ rất lớn; kiểm tra không có entry lạ bị
+   xóa, prefix JPEG và `x_meta` còn nguyên. Báo cáo số liệu từng lớp + phần chưa test runtime.
+
+Chi tiết, bảng phân loại và lỗi thường gặp: [character-split.md](character-split.md).

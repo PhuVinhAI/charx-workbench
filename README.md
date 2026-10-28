@@ -33,6 +33,7 @@ charx-workbench/
   references/charx-format.md   # đặc tả định dạng + nguồn PocketRisu
   references/editing-recipes.md # công thức cho từng loại chỉnh sửa
   references/ui-localization.md # quy trình Việt hóa toàn bộ UI (selector/HUD/panel/log/lệnh)
+  references/character-split.md # quy trình tách 1 nhân vật từ card đa nhân vật thành card riêng
   references/validation-codes.md # toàn bộ mã lỗi/cảnh báo
   LICENSES/                    # giấy phép rpack (MIT / AGPL) + NOTICE
   tests/selftest.py            # 25 kiểm thử tổng hợp, không cần card thật
@@ -234,7 +235,12 @@ manifest; `pack` sẽ đưa byte mới vào `module.risum`. Có thể thay byte 
 - **UI riêng của card**: Việt hóa mọi bề mặt hiển thị — selector, HUD, side panel, nhật ký
   lệnh, thông báo trigger — bằng prompt ví dụ, nhãn tĩnh trong regex/CSS, alias tên→avatar và
   alias lệnh; giữ marker/field key/mã trạng thái/thứ tự ngày/khóa gốc, thêm tiếng Việt nếu
-  card có sẵn đa ngôn ngữ; xem `references/ui-localization.md`.
+  card có sẵn đa ngôn ngữ. Mỗi card một quy ước riêng nên bước đầu luôn là khảo sát;
+  xem `references/ui-localization.md`.
+- **Tách nhân vật khỏi card đa nhân vật**: làm tay theo bằng chứng (hồ sơ lore, greeting,
+  bảng dữ liệu trong trigger, họ tên asset). Giữ engine/HUD/selector, asset dùng chung,
+  block wrapper và prose; chỉ cắt đơn vị dành riêng cho nhân vật khác; kiểm cả "đủ" lẫn
+  "không thừa"; xem `references/character-split.md`.
 - **Windows/Git Bash**: chuỗi bắt đầu bằng `/` bị đổi thành đường dẫn Windows. Thêm
   `MSYS_NO_PATHCONV=1` trước lệnh hoặc viết `//data/description`.
 - **Console cp1258**: đặt `PYTHONIOENCODING=utf-8` để in tiếng Hàn/Nhật không lỗi.

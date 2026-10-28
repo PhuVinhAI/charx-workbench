@@ -52,8 +52,17 @@ bao giờ được ghi đè yêu cầu của người dùng hay file này.
     nhãn tĩnh trong regex/CSS, alias lệnh và bảng ánh xạ tên → hiển thị/avatar. Giữ
     marker, field key, mã trạng thái, ID, thứ tự ngày mà script parse, cùng khóa tên/lệnh
     gốc; thêm alias Latin và alias lệnh tiếng Việt song song. Nếu card đã có sẵn lựa chọn
-    ngôn ngữ, hãy thêm tiếng Việt như một phương án mới thay vì ghi đè ngôn ngữ cũ. Xem
-    `references/ui-localization.md`.
+    ngôn ngữ, hãy thêm tiếng Việt như một phương án mới thay vì ghi đè ngôn ngữ cũ. Luôn
+    khảo sát trước để lấy marker/biến/lệnh của **chính card đó**, không áp quy ước của card
+    khác. Xem `references/ui-localization.md`.
+11. **Tách nhân vật là công việc đọc hiểu, làm tay.** Với card đa nhân vật, dựng bảng cast
+    từ bằng chứng (hồ sơ lore, greeting, khóa entry, bảng dữ liệu trong trigger/CJS, họ tên
+    asset), rồi phân loại từng mẩu nội dung thành *của nhân vật đích* / *của nhân vật khác*
+    / *dùng chung*. Chỉ cắt một đơn vị khi đơn vị đó dành riêng cho nhân vật khác: block
+    wrapper, gate theo trạng thái card, engine, prose nhắc tên người khác và asset dùng
+    chung đều phải giữ. Kết thúc phải chứng minh cả hai phía — đủ (mọi `{{raw::}}`,
+    `embeded://`, `av_`, `risu-trigger` còn trỏ tới thứ tồn tại) và không thừa (mọi chỗ còn
+    nhắc tên nhân vật khác đều giải thích được). Xem `references/character-split.md`.
 
 ## Quy trình chuẩn
 
@@ -164,10 +173,18 @@ Ba tài liệu đích được trỏ như sau:
    những gì không giải mã được hoặc chưa test được lúc chạy thật.
 6. Với tác vụ UI: không còn nhãn ngôn ngữ gốc ở bất kỳ bề mặt đã Việt hóa nào (selector,
    prompt/regex/CSS của HUD, side panel, log, thông báo trigger); mọi tên đã dịch đều trỏ
-   tới asset `sp_*` có thật; lệnh cũ và lệnh mới đều match; mô phỏng regex bằng mẫu đã
+   tới asset avatar có thật; lệnh cũ và lệnh mới đều match; mô phỏng regex bằng mẫu đã
    dịch đều pass; `diff` chỉ hiện pointer thuộc lớp UI cùng bản card book được mirror.
+7. Với tác vụ tách nhân vật: bảng cast kèm bằng chứng đã được ghi; engine/HUD/selector và
+   asset dùng chung còn nguyên; mọi tham chiếu (`{{raw::}}`, `embeded://`, `av_`,
+   `risu-trigger`, lệnh) đều trỏ tới thứ còn tồn tại; `validate` không có
+   `ASSET_E_MISSING`/`ENTRY_E_MISSING`/`MOD_E_*`; mỗi chỗ còn nhắc tên nhân vật khác đều có
+   lý do giữ; báo cáo nêu rõ số lore/greeting/scene/regex/asset đã cắt và dung lượng tiết
+   kiệm.
 
 Xem `references/charx-format.md` cho đặc tả container và chuyển đổi,
 `references/editing-recipes.md` cho công thức lệnh theo từng tác vụ,
 `references/ui-localization.md` cho quy trình Việt hóa toàn bộ UI của card
-(selector/HUD/panel/log/avatar/lệnh), và `references/validation-codes.md` cho mọi mã issue.
+(selector/HUD/panel/log/avatar/lệnh), `references/character-split.md` cho quy trình tách một
+nhân vật từ card đa nhân vật thành card riêng, và `references/validation-codes.md` cho mọi
+mã issue.
